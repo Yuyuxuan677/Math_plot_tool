@@ -1,0 +1,36 @@
+{
+  "name": "jiantu-math-plot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "简图 - 手机优先的函数图像与几何作图工具",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node tests/e2e/run.mjs"
+  },
+  "dependencies": {
+    "jsxgraph": "1.14.0",
+    "katex": "0.19.0",
+    "mathjs": "15.2.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.186.1",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/three": "0.186.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "playwright-core": "1.64.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12"
+  }
+}

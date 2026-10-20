@@ -1,0 +1,11 @@
+node_modules
+dist
+.cache
+.vite
+.npm-cache
+.pnpm-store
+*.log
+.DS_Store
+test-results
+playwright-report
+artifacts/tmp
