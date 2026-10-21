@@ -1,4 +1,4 @@
-import { parse, simplify, type MathNode } from 'mathjs';
+import { parse, rationalize, simplify, type MathNode } from 'mathjs';
 import type { Geometry, Item2D, LineShape, Orientation, Point2 } from '../../app/types';
 import { formatNice, niceFraction } from '../../app/utils';
 import { analyze2DItem } from '../plot2d/analysis';
@@ -80,6 +80,14 @@ function substituteVar(source: string, variable: 'x' | 'y', replacement: string)
   return source.replace(pattern, `(${replacement})`);
 }
 
+function hasFunctionNode(node: MathNode): boolean {
+  let found = false;
+  node.traverse((child: MathNode) => {
+    if (child.type === 'FunctionNode') found = true;
+  });
+  return found;
+}
+
 function simplifyNode(source: string): { node: MathNode; tex: string; plain: string; error?: string } {
   try {
     const raw = parse(source);
@@ -91,6 +99,22 @@ function simplifyNode(source: string): { node: MathNode; tex: string; plain: str
     }
     let tex = source;
     let plain = source;
+
+    // Polynomial/rational loci are much easier to read in expanded form, e.g.
+    // y = 2x^2 + 6x + 2.5 instead of a nested fraction. mathjs simplify keeps
+    // the nested form, so try rationalize as a display-only enhancement.
+    try {
+      if (!hasFunctionNode(node)) {
+        const rationalText = rationalize(raw).toString();
+        const rationalNode = parse(rationalText);
+        if (!hasFunctionNode(rationalNode) && rationalText.length < 2000) {
+          node = rationalNode;
+        }
+      }
+    } catch {
+      // Keep the simplified form when rationalize is not applicable.
+    }
+
     try {
       tex = node.toTex({ parenthesis: 'keep' });
     } catch {
@@ -338,7 +362,7 @@ export function deriveLocus(input: LocusInput): LocusResult {
           commonSteps[1],
           {
             title: '代入函数',
-            tex: `M=(u,f(u)),\\quad u=${texNumber(q.x)}+\\frac{x-${texNumber(q.x)}}{${texNumber(lambda)}},\\quad y=${texNumber(q.y)}+\\lambda(f(u)-${texNumber(q.y)})`,
+            tex: `M=(u,f(u)),\\quad u=${texNumber(q.x)}+\\frac{x-(${texNumber(q.x)})}{${texNumber(lambda)}},\\quad y=${texNumber(q.y)}+\\lambda\\left(f(u)-(${texNumber(q.y)})\\right)`,
           },
           {
             title: '化简结果',
