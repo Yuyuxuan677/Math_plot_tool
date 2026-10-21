@@ -52,6 +52,10 @@ npm run preview
 
 构建产物在 `dist/`，可由任意静态文件服务器托管。
 
+### 部署到公网
+
+完整方案见 [DEPLOY.md](DEPLOY.md)。面向中国大陆用户长期使用，推荐“域名 + ICP 备案 + 国内对象存储/COS + CDN”；GitHub Pages 工作流已提供，适合临时预览。
+
 ## 功能
 
 ### 2D 表达式
