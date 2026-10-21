@@ -355,7 +355,9 @@ function LineControls({
 
       {!shape.driverCurveId && (
         <p className="hint-text">
-          拖动{shape.movingEndpoint === 'A' ? 'A' : 'B'}点时，等分点会实时更新；绑定曲线后可播放并推导轨迹方程。
+          {shape.showDivisions
+            ? `拖动${shape.movingEndpoint === 'A' ? 'A' : 'B'}点时，等分点会实时更新；绑定曲线后可播放并推导轨迹方程。`
+            : `等分点当前隐藏。打开“显示 n 等分点”后，拖动或播放时才能看到标记点和轨迹；绑定曲线后仍可推导轨迹方程。`}
         </p>
       )}
 

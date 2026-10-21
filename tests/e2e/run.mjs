@@ -293,6 +293,15 @@ async function runDesktop() {
     await page.waitForTimeout(900);
     assert.equal(await page.locator('.object-card:not(.geometry-card)').count(), 3, '2D objects did not persist');
     assert.equal(await page.locator('.geometry-card').count(), 2, 'geometry did not persist');
+    const lineAfterReload = page.locator('.geometry-card').filter({ hasText: '直线' }).last();
+    if ((await lineAfterReload.locator('.card-body').count()) === 0) {
+      await lineAfterReload.locator('.card-title-button').click();
+      await page.waitForTimeout(300);
+    }
+    assert(
+      (await lineAfterReload.innerText()).includes('4 个等分点'),
+      'division visibility state did not persist after reload',
+    );
 
     await page.getByRole('tab', { name: /3D 空间/ }).click();
     await page.waitForTimeout(1800);
