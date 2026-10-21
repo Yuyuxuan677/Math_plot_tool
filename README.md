@@ -10,6 +10,8 @@
 - 公式排版：[KaTeX](https://katex.org/)
 - 3D：[Three.js](https://threejs.org/)
 
+完整验收记录见 [ACCEPTANCE.md](ACCEPTANCE.md)。
+
 ![手机端函数图](artifacts/e2e/mobile-2d-edit.png)
 ![3D 曲面](artifacts/e2e/mobile-3d.png)
 
