@@ -370,6 +370,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       b,
       extended: false,
       divisionN: 2,
+      showDivisions: false,
       showTrace: false,
       driverPlaying: false,
       traceClearToken: 0,

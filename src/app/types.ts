@@ -106,6 +106,8 @@ export interface LineShape extends GeometryBase {
   /** Show an infinite line instead of the segment between A and B. */
   extended: boolean;
   divisionN: number;
+  /** Paint the n−1 division markers on the canvas. */
+  showDivisions: boolean;
   showTrace: boolean;
   driverPlaying: boolean;
   traceClearToken: number;

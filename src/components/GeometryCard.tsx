@@ -16,7 +16,10 @@ import { Switch } from './Switch';
 
 function subtitleFor(shape: Geometry): string {
   if (shape.kind === 'line') {
-    return `${shape.extended ? '直线' : '线段'} · ${Math.max(1, shape.divisionN - 1)} 个等分点`;
+    const count = Math.max(1, shape.divisionN - 1);
+    return shape.showDivisions
+      ? `${shape.extended ? '直线' : '线段'} · ${count} 个等分点`
+      : `${shape.extended ? '直线' : '线段'} · 等分点已隐藏`;
   }
   return `${shape.tangents.length} 条切线`;
 }
@@ -233,7 +236,25 @@ function LineControls({
 
       <div className="setting-row">
         <div>
-          <span className="setting-title">等分点</span>
+          <span className="setting-title">显示 n 等分点</span>
+          <p className="setting-hint">默认隐藏；打开后在线段上标出等分点</p>
+        </div>
+        <Switch
+          checked={shape.showDivisions}
+          onChange={(checked) =>
+            updateGeometry(shape.id, {
+              showDivisions: checked,
+              showTrace: checked ? shape.showTrace : false,
+              traceClearToken: checked ? shape.traceClearToken : shape.traceClearToken + 1,
+            })
+          }
+          label="显示等分点"
+        />
+      </div>
+
+      <div className="setting-row">
+        <div>
+          <span className="setting-title">等分点数量</span>
           <p className="setting-hint">在 A、B 之间标出 n 等分点</p>
         </div>
         <div className="inline-number">
@@ -249,6 +270,10 @@ function LineControls({
           <span className="inline-number-suffix">等分</span>
         </div>
       </div>
+
+      {!shape.showDivisions && (
+        <p className="hint-text">等分点已隐藏；打开上面的开关后才会在画布上显示。</p>
+      )}
 
       <div className="setting-row">
         <div>
@@ -337,7 +362,11 @@ function LineControls({
       <div className="setting-row">
         <div>
           <span className="setting-title">记录等分点轨迹</span>
-          <p className="setting-hint">拖动或播放时显示等分点留下的轨迹</p>
+          <p className="setting-hint">
+            {shape.showDivisions
+              ? '拖动或播放时显示等分点留下的轨迹'
+              : '先打开“显示 n 等分点”才能记录轨迹'}
+          </p>
         </div>
         <Switch
           checked={shape.showTrace}
@@ -348,6 +377,7 @@ function LineControls({
             })
           }
           label="记录等分点轨迹"
+          disabled={!shape.showDivisions}
         />
       </div>
     </>

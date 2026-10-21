@@ -28,6 +28,7 @@ function line(overrides: Partial<LineShape> = {}): LineShape {
     b: { x: 2, y: 0 },
     extended: false,
     divisionN: 2,
+    showDivisions: false,
     showTrace: false,
     driverPlaying: false,
     traceClearToken: 0,

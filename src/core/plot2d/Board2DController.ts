@@ -68,6 +68,7 @@ interface GeometryEntry {
   driverTargetElement: AnyElement | null;
   equationLabel: AnyElement | null;
   lastTraceClearToken: number;
+  lastShowDivisions: boolean;
   lastDriverPlaying: boolean;
 }
 
@@ -310,7 +311,6 @@ export class Board2DController {
     }
 
     this.syncTangents(entry, visible);
-    if (entry.derivative) entry.derivative.setAttribute({ visible });
     this.applyCurveVisibility(entry, visible);
   }
 
@@ -1006,7 +1006,7 @@ export class Board2DController {
             strokeWidth: 1,
             highlight: false,
             showInfobox: false,
-            trace: shape.showTrace,
+            trace: shape.showDivisions && shape.showTrace,
             traceAttributes: {
               strokeColor: shape.color,
               strokeWidth: 1.2,
@@ -1126,6 +1126,7 @@ export class Board2DController {
         driverTargetElement: null,
         equationLabel: null,
         lastTraceClearToken: shape.kind === 'line' ? shape.traceClearToken : 0,
+        lastShowDivisions: shape.kind === 'line' ? shape.showDivisions : true,
         lastDriverPlaying: false,
       };
       this.geometryEntries.set(shape.id, entry);
@@ -1168,12 +1169,13 @@ export class Board2DController {
         // ignore
       }
     }
+    const showDivisions = shape.kind === 'line' ? shape.showDivisions : true;
     for (const division of entry.divisions) {
       try {
         division.setAttribute({
-          visible,
+          visible: visible && showDivisions,
           fillColor: shape.color,
-          trace: shape.kind === 'line' ? shape.showTrace : false,
+          trace: shape.kind === 'line' ? showDivisions && shape.showTrace : false,
         });
       } catch {
         // ignore
@@ -1224,7 +1226,10 @@ export class Board2DController {
         }
         entry.lastDriverPlaying = shape.driverPlaying;
       }
-      if (entry.lastTraceClearToken !== shape.traceClearToken) {
+      if (
+        entry.lastTraceClearToken !== shape.traceClearToken ||
+        entry.lastShowDivisions !== showDivisions
+      ) {
         for (const division of entry.divisions) {
           try {
             division.clearTrace();
@@ -1233,6 +1238,7 @@ export class Board2DController {
           }
         }
         entry.lastTraceClearToken = shape.traceClearToken;
+        entry.lastShowDivisions = showDivisions;
       }
     }
   }

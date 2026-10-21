@@ -120,9 +120,27 @@ async function runDesktop() {
     await page.waitForTimeout(500);
     assert.equal(await paramInput.inputValue(), '2');
 
-    await page.getByRole('switch', { name: '显示导函数' }).click();
+    const derivativeSwitch = page.getByRole('switch', { name: '显示导函数' });
+    await derivativeSwitch.click();
     await page.waitForTimeout(500);
     assert((await page.locator('.derivative-box .katex').count()) > 0, 'derivative formula missing');
+    const visibleBlueDashes = () =>
+      page.evaluate(() => {
+        const paths = [...document.querySelectorAll('.jxgbox svg path')];
+        return paths.filter((path) => {
+          const style = getComputedStyle(path);
+          return (
+            style.stroke === 'rgb(37, 99, 235)' &&
+            style.strokeDasharray !== 'none' &&
+            style.visibility !== 'hidden' &&
+            style.display !== 'none'
+          );
+        }).length;
+      });
+    assert((await visibleBlueDashes()) > 0, 'derivative curve was not drawn');
+    await derivativeSwitch.click();
+    await page.waitForTimeout(600);
+    assert.equal(await visibleBlueDashes(), 0, 'derivative curve stayed visible after toggling off');
 
     const addTangentButton = page.getByRole('button', { name: /添加切线/ });
     await addTangentButton.click();
@@ -203,8 +221,14 @@ async function runDesktop() {
     await nField.blur();
     await page.waitForTimeout(700);
     assert(
+      (await lineCard.innerText()).includes('等分点已隐藏'),
+      'division markers should be hidden by default',
+    );
+    await lineCard.getByRole('switch', { name: '显示等分点' }).click();
+    await page.waitForTimeout(700);
+    assert(
       (await lineCard.innerText()).includes('4 个等分点'),
-      'division count did not update',
+      'division count did not update after showing markers',
     );
 
     await selectDriver(page, lineCard, '圆');

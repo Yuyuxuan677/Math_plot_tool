@@ -171,6 +171,7 @@ function sanitizeGeometry(value: unknown): Geometry | null {
     const b = pointValue(value.b);
     if (!a || !b) return null;
     const divisionN = Math.max(2, Math.min(20, Math.round(numberValue(value.divisionN, 2))));
+    const showDivisions = boolValue(value.showDivisions, false);
     return {
       ...common,
       kind: 'line',
@@ -178,7 +179,8 @@ function sanitizeGeometry(value: unknown): Geometry | null {
       b,
       extended: boolValue(value.extended, false),
       divisionN,
-      showTrace: boolValue(value.showTrace, false),
+      showDivisions,
+      showTrace: showDivisions && boolValue(value.showTrace, false),
       driverPlaying: boolValue(value.driverPlaying, false),
       traceClearToken: numberValue(value.traceClearToken, 0),
       movingEndpoint: value.movingEndpoint === 'A' ? 'A' : 'B',
