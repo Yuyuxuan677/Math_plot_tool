@@ -150,6 +150,31 @@ async function runDesktop() {
     assert.equal(await page.locator('.tangent-row').count(), 2, 'multiple tangents were not added');
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-expressions.png` });
 
+    const expressionCard = page.locator('.object-card:not(.geometry-card)').first();
+    const visibleCurvePaths = () =>
+      page.evaluate(() => {
+        const paths = [...document.querySelectorAll('.jxgbox svg path')];
+        return paths.filter((path) => {
+          const style = getComputedStyle(path);
+          return (
+            (style.stroke === 'rgb(37, 99, 235)' || style.stroke === 'rgb(217, 119, 6)') &&
+            style.visibility !== 'hidden' &&
+            style.display !== 'none'
+          );
+        }).length;
+      });
+    assert((await visibleCurvePaths()) > 0, 'function or tangents were not visible');
+    await expressionCard.getByRole('button', { name: '隐藏' }).click();
+    await page.waitForTimeout(600);
+    assert.equal(
+      await visibleCurvePaths(),
+      0,
+      'hiding an expression left its curve or tangents visible',
+    );
+    await expressionCard.getByRole('button', { name: '显示' }).click();
+    await page.waitForTimeout(600);
+    assert((await visibleCurvePaths()) > 0, 'showing an expression did not restore its curve');
+
     await expr.fill('sin(');
     await page.waitForTimeout(500);
     assert((await page.locator('.field-error').count()) > 0, 'invalid expression did not show an error');
