@@ -405,7 +405,7 @@ select:focus-visible {
 .mobile-sheet {
   position: fixed;
   right: 0;
-  bottom: 0;
+  bottom: var(--keyboard-inset, 0px);
   left: 0;
   z-index: 30;
   display: flex;
@@ -422,6 +422,7 @@ select:focus-visible {
 
 .mobile-sheet.is-expanded {
   height: min(48dvh, 560px);
+  max-height: calc(100dvh - var(--keyboard-inset, 0px) - 64px);
 }
 
 .sheet-grabber {

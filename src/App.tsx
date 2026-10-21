@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react';
 import { savePersistedState } from './app/persistence';
 import { useAppStore } from './app/store';
 import { useMediaQuery } from './app/useMediaQuery';
+import { useKeyboardInset } from './app/useKeyboardInset';
 import { AddMenu } from './components/AddMenu';
 import { Board2D } from './components/Board2D';
 import { EmptyState } from './components/EmptyState';
@@ -26,6 +27,7 @@ export default function App() {
   const view2dBoundingBox = useAppStore((state) => state.view2dBoundingBox);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
   const isMobile = useMediaQuery('(max-width: 900px)');
+  useKeyboardInset();
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
