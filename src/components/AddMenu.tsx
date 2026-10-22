@@ -13,6 +13,8 @@ export function AddMenu() {
   );
   const addDivisionMark = useAppStore((state) => state.addDivisionMark);
   const setActiveTool = useAppStore((state) => state.setActiveTool);
+  const autoMovePoints = useAppStore((state) => state.autoMovePoints);
+  const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
 
   if (!open) return null;
 
@@ -34,6 +36,14 @@ export function AddMenu() {
             label: 'N 等分点',
             detail: '在两个标记点之间显示等分点与轨迹',
             action: () => addDivisionMark(),
+          },
+          {
+            label: autoMovePoints ? '暂停自动移动' : '自动移动标记点',
+            detail: '让标记点沿所在曲线自动移动',
+            action: () => {
+              setAutoMovePoints(!autoMovePoints);
+              setOpen(false);
+            },
           },
           {
             label: '切线交点',

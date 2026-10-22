@@ -62,6 +62,7 @@ export function Board2D() {
   const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const autoMovePoints = useAppStore((state) => state.autoMovePoints);
   const paramValues = useAppStore((state) => state.paramValues);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
   const viewResetToken = useAppStore((state) => state.viewResetToken);
@@ -190,6 +191,10 @@ export function Board2D() {
     paramValues,
     snapToGrid,
   ]);
+
+  useEffect(() => {
+    controllerRef.current?.setAutoMove(autoMovePoints);
+  }, [autoMovePoints]);
 
   useEffect(() => {
     if (viewResetToken === 0) return;

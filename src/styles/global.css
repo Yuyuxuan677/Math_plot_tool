@@ -2348,3 +2348,54 @@ select:focus-visible {
 .division-card .card-kind {
   color: #9f1239;
 }
+
+/* ---------- Tangent locus derivation ---------- */
+
+.locus-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.locus-result {
+  padding: 10px 12px;
+  border: 1px solid #ddd6fe;
+  border-radius: 10px;
+  background: #faf8ff;
+}
+
+.locus-title {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.locus-note {
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.locus-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.locus-steps li {
+  margin-bottom: 9px;
+}
+
+.locus-steps p {
+  margin: 3px 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.secondary-small-button.is-active {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #047857;
+}

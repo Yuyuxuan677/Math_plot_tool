@@ -8,11 +8,20 @@ export function TangentAngleCard({ constraint }: { constraint: TangentAngleConst
   const items2d = useAppStore((state) => state.items2d);
   const update = useAppStore((state) => state.updateTangentAngleConstraint);
   const remove = useAppStore((state) => state.removeTangentAngleConstraint);
+  const tangentIntersections = useAppStore((state) => state.tangentIntersections);
+  const setExpandedId = useAppStore((state) => state.setExpandedId);
   const choices = buildTangentChoices(items2d);
   const sourceKey = tangentRefKey(constraint.source);
   const targetKey = tangentRefKey(constraint.target);
   const source = choices.find((choice) => tangentRefKey(choice) === sourceKey);
   const target = choices.find((choice) => tangentRefKey(choice) === targetKey);
+  const sameRef = (left: typeof constraint.source, right: typeof constraint.source) =>
+    left.ownerId === right.ownerId && left.tangentId === right.tangentId;
+  const linkedIntersection = tangentIntersections.find(
+    (mark) =>
+      (sameRef(mark.a, constraint.source) && sameRef(mark.b, constraint.target)) ||
+      (sameRef(mark.a, constraint.target) && sameRef(mark.b, constraint.source)),
+  );
 
   return (
     <article className="object-card tangent-angle-card" data-id={constraint.id}>
@@ -126,6 +135,15 @@ export function TangentAngleCard({ constraint }: { constraint: TangentAngleConst
         >
           交换源 / 目标切线
         </button>
+        {linkedIntersection && (
+          <button
+            type="button"
+            className="locus-button"
+            onClick={() => setExpandedId(linkedIntersection.id)}
+          >
+            查看交点轨迹与轨迹方程
+          </button>
+        )}
       </div>
     </article>
   );

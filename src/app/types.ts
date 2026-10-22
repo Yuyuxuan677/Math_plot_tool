@@ -209,6 +209,11 @@ export interface MarkedPoint {
   id: string;
   /** Expression curve that owns this point. */
   ownerId: string;
+  /** Manual point or the point of a tangent. */
+  source?: 'manual' | 'tangent';
+  /** Present when source === 'tangent'. */
+  tangentOwnerId?: string;
+  tangentId?: string;
   /** Auto-assigned display name such as A, B, C. */
   name: string;
   point: Point2;

@@ -61,6 +61,18 @@ export const IconTarget = (p: IconProps) => (
   </Base>
 );
 
+export const IconPlay = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M8 5l10 7-10 7V5Z" fill="currentColor" stroke="none" />
+  </Base>
+);
+
+export const IconPause = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M8 5v14M16 5v14" strokeWidth={2.6} />
+  </Base>
+);
+
 export const IconHelp = (p: IconProps) => (
   <Base {...p}>
     <circle cx="12" cy="12" r="9" />

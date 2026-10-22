@@ -90,7 +90,7 @@ async function screenFor(page, x, y) {
 }
 
 async function markPointAt(page, x, y) {
-  await page.locator('.objects-panel-head .secondary-small-button').click();
+  await page.locator('.objects-panel-head .secondary-small-button').filter({ hasText: '标点' }).click();
   await page.waitForTimeout(250);
   const screen = await screenFor(page, x, y);
   await page.mouse.click(screen.left, screen.top);
@@ -218,12 +218,10 @@ async function runDesktop() {
       (await page.locator('.tangent-angle-card').first().innerText()).includes('90'),
       'default tangent angle should be 90',
     );
-
-    await addOption(page, '切线交点');
     assert.equal(
       await page.locator('.tangent-intersection-card').count(),
       1,
-      'tangent intersection card missing',
+      'angle constraint did not create the tangent intersection automatically',
     );
     const coordinateLabels = await page.locator('.jxgbox .JXGtext').allTextContents();
     assert(
@@ -233,8 +231,19 @@ async function runDesktop() {
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-tangent-features.png` });
 
     const tangentCard = page.locator('.tangent-intersection-card').first();
-    await tangentCard.getByRole('switch', { name: '记录切线交点轨迹' }).click();
-    await page.waitForTimeout(250);
+    if ((await tangentCard.locator('.card-body').count()) === 0) {
+      await tangentCard.locator('.card-title-button').click();
+      await page.waitForTimeout(250);
+    }
+    const traceSwitch = tangentCard.getByRole('switch', { name: '记录切线交点轨迹' });
+    assert(await traceSwitch.isChecked(), 'auto tangent trace should be enabled');
+    await tangentCard.getByRole('button', { name: '推导交点轨迹方程' }).click();
+    await page.waitForTimeout(300);
+    assert.equal(
+      await tangentCard.locator('.locus-result').count(),
+      1,
+      'tangent locus result was not shown',
+    );
     const tangentGlider = await page.evaluate(() => {
       const boards = window.JXG?.boards;
       const board = boards ? Object.values(boards)[0] : null;
@@ -262,6 +271,23 @@ async function runDesktop() {
     );
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-tangent-trace.png` });
 
+    const markedPointBeforeAuto = await page.locator('.marked-point-card').first().innerText();
+    await page
+      .locator('.objects-panel-head .secondary-small-button')
+      .filter({ hasText: '自动移动' })
+      .click();
+    await page.waitForTimeout(1100);
+    const markedPointAfterAuto = await page.locator('.marked-point-card').first().innerText();
+    assert.notEqual(
+      markedPointAfterAuto,
+      markedPointBeforeAuto,
+      'marked points did not move automatically',
+    );
+    await page
+      .locator('.objects-panel-head .secondary-small-button')
+      .filter({ hasText: '暂停' })
+      .click();
+
     const functionCardAgain = await expandCard(page, '.object-card[data-kind="explicit"]');
     const functionInputAgain = functionCardAgain.locator('.expression-input').first();
     await functionInputAgain.fill('sin(');
@@ -284,7 +310,7 @@ async function runDesktop() {
     assert.equal(await page.locator('.object-card[data-kind]').count(), 2, 'expression persistence failed');
     assert.equal(await page.locator('.tangent-angle-card').count(), 1, 'angle constraint persistence failed');
     assert.equal(await page.locator('.tangent-intersection-card').count(), 1, 'intersection persistence failed');
-    assert.equal(await page.locator('.marked-point-card').count(), 2, 'marked point persistence failed');
+    assert.equal(await page.locator('.marked-point-card').count(), 6, 'marked point persistence failed');
     assert.equal(await page.locator('.division-card').count(), 1, 'division persistence failed');
 
     const tickBefore = await tickPositions(page);

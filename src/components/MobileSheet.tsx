@@ -20,6 +20,8 @@ export function MobileSheet() {
   const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const autoMovePoints = useAppStore((state) => state.autoMovePoints);
+  const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
 
   const startY = useRef<number | null>(null);
   const intent = useRef<'up' | 'down' | null>(null);
@@ -115,6 +117,16 @@ export function MobileSheet() {
           {expanded ? <IconChevronDown size={18} /> : <IconChevronUp size={18} />}
         </button>
         <div className="sheet-quick-actions">
+          {mode === '2d' && markedPoints.length > 0 && (
+            <button
+              type="button"
+              className="sheet-quick-button"
+              aria-pressed={autoMovePoints}
+              onClick={() => setAutoMovePoints(!autoMovePoints)}
+            >
+              <span>{autoMovePoints ? '暂停' : '自动'}</span>
+            </button>
+          )}
           {mode === '2d' && (
             <button
               type="button"

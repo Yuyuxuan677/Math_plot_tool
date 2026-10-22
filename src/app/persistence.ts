@@ -331,9 +331,22 @@ function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
   const point = pointValue(value.point);
   if (!point) return null;
   const name = /^[A-Za-z]\d*$/.test(value.name) ? value.name : 'A';
+  const source = value.source === 'tangent' ? 'tangent' : 'manual';
+  const tangentOwnerId =
+    source === 'tangent' && typeof value.tangentOwnerId === 'string'
+      ? value.tangentOwnerId
+      : undefined;
+  const tangentId =
+    source === 'tangent' && typeof value.tangentId === 'string'
+      ? value.tangentId
+      : undefined;
+  if (source === 'tangent' && (!tangentOwnerId || !tangentId)) return null;
   return {
     id: value.id,
     ownerId: value.ownerId,
+    source,
+    tangentOwnerId,
+    tangentId,
     name,
     point,
     visible: boolValue(value.visible, true),
@@ -407,7 +420,10 @@ export function loadPersistedState(): Partial<PersistedState> | null {
           .map(sanitizeMarkedPoint)
           .filter(
             (item): item is MarkedPoint =>
-              item !== null && knownItemIds.has(item.ownerId),
+              item !== null &&
+              knownItemIds.has(item.ownerId) &&
+              (item.source !== 'tangent' ||
+                knownTangentKeys.has(`${item.tangentOwnerId}:${item.tangentId}`)),
           )
       : [];
     const markedPointIds = new Set(markedPoints.map((point) => point.id));

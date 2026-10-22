@@ -7,7 +7,7 @@ import { Item3DCard } from './Item3DCard';
 import { ParameterPanel } from './ParameterPanel';
 import { TangentAngleCard } from './TangentAngleCard';
 import { TangentIntersectionCard } from './TangentIntersectionCard';
-import { IconPlus, IconTarget } from './Icon';
+import { IconPause, IconPlay, IconPlus, IconTarget } from './Icon';
 
 export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
   const mode = useAppStore((state) => state.mode);
@@ -17,6 +17,8 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
   const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const autoMovePoints = useAppStore((state) => state.autoMovePoints);
+  const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
   const expandedId = useAppStore((state) => state.expandedId);
   const setAddMenuOpen = useAppStore((state) => state.setAddMenuOpen);
   const setActiveTool = useAppStore((state) => state.setActiveTool);
@@ -51,6 +53,17 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
             <p>{count > 0 ? `${count} 个对象` : '从一条曲线开始'}</p>
           </div>
           <div className="objects-head-actions">
+            {mode === '2d' && markedPoints.length > 0 && (
+              <button
+                type="button"
+                className={`secondary-small-button ${autoMovePoints ? 'is-active' : ''}`}
+                aria-pressed={autoMovePoints}
+                onClick={() => setAutoMovePoints(!autoMovePoints)}
+              >
+                {autoMovePoints ? <IconPause size={15} /> : <IconPlay size={15} />}
+                {autoMovePoints ? '暂停' : '自动移动'}
+              </button>
+            )}
             {mode === '2d' && (
               <button
                 type="button"

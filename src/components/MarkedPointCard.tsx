@@ -31,7 +31,9 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
           aria-hidden="true"
         />
         <button type="button" className="card-title-button" aria-expanded={expanded} onClick={toggleExpanded}>
-          <span className="card-kind">标记点 {marked.name}</span>
+          <span className="card-kind">
+            {marked.source === 'tangent' ? '切点' : '标记点'} {marked.name}
+          </span>
           <span className="card-summary">
             （{formatNumber(marked.point.x)}, {formatNumber(marked.point.y)}） ·{' '}
             {owner ? item2DLabel(owner) : '曲线已删除'}
@@ -41,19 +43,21 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
           <button
             type="button"
             className="icon-button small-icon"
-            aria-label={marked.visible ? '隐藏标记点' : '显示标记点'}
+            aria-label={marked.visible ? '隐藏切点标记' : '显示切点标记'}
             onClick={() => update(marked.id, { visible: !marked.visible })}
           >
             {marked.visible ? <IconEye size={17} /> : <IconEyeOff size={17} />}
           </button>
-          <button
-            type="button"
-            className="icon-button small-icon danger-icon"
-            aria-label={`删除标记点 ${marked.name}`}
-            onClick={() => remove(marked.id)}
-          >
-            <IconTrash size={17} />
-          </button>
+          {marked.source !== 'tangent' && (
+            <button
+              type="button"
+              className="icon-button small-icon danger-icon"
+              aria-label={`删除标记点 ${marked.name}`}
+              onClick={() => remove(marked.id)}
+            >
+              <IconTrash size={17} />
+            </button>
+          )}
           <button
             type="button"
             className="icon-button small-icon"
@@ -67,7 +71,9 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
       {expanded && (
         <div className="card-body">
           <p className="setting-hint">
-            点 {marked.name} 可在曲线上拖动；坐标为实时值。
+            {marked.source === 'tangent'
+              ? `由切线自动生成的切点 ${marked.name}；可拖动切线切点改变位置。`
+              : `点 ${marked.name} 可在曲线上拖动；坐标为实时值。`}
           </p>
           <div className="setting-row">
             <span className="setting-title">当前坐标</span>

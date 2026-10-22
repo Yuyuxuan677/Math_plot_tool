@@ -59,6 +59,7 @@ interface TangentElements {
   pointBeforeDrag: Point2 | null;
   /** Hidden second point used to render an exact tangent for implicit curves. */
   helper?: AnyElement;
+  visible: boolean;
 }
 
 interface ExpressionEntry {
@@ -70,6 +71,7 @@ interface ExpressionEntry {
   tangents: Map<string, TangentElements>;
   kind: Item2D['kind'];
   rangeKey: string;
+  curveStyleKey: string;
 }
 
 interface GeometryEntry {
@@ -111,12 +113,25 @@ interface TangentIntersectionEntry {
   lastTraceClearToken: number;
   lastShowTrace: boolean;
   lastPoint: Point2 | null;
+  lastVisible: boolean;
+  lastColor: string;
+  lastCoordinates: boolean;
+  lastLabelReport: number;
 }
 
 interface MarkedPointEntry {
   marked: MarkedPoint;
   glider: AnyElement;
   curve: AnyElement;
+  owned: boolean;
+  label: AnyElement | null;
+  direction: 1 | -1;
+  parameter?: number;
+  lastVisible: boolean;
+  lastName: string;
+  lastX: number;
+  lastY: number;
+  lastLabelReport: number;
 }
 
 interface DivisionEntry {
@@ -148,13 +163,16 @@ export class Board2DController {
   private traceCanvas: HTMLCanvasElement | null = null;
   private traceContext: CanvasRenderingContext2D | null = null;
   private traceFrame: number | null = null;
+  private autoMoveTimer: number | null = null;
   private markedPointEntries = new Map<string, MarkedPointEntry>();
   private divisionEntries = new Map<string, DivisionEntry>();
   private draggingPointIds = new Set<string>();
+  private draggingTangentRefs = new Set<string>();
   private tangentConstraintStates = new Map<
     string,
     { source: Point2; target: Point2; angleDeg: number }
   >();
+  private lastConstraintTargetReport = new Map<string, number>();
   private driverTargets = new Map<string, AnyElement>();
   private state: BoardSnapshot = {
     items2d: [],
@@ -690,8 +708,18 @@ export class Board2DController {
       const px = resolved.tangent.glider.X();
       const py = resolved.tangent.glider.Y();
       if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
-      const raw = resolved.tangent.line.getSlope();
-      const slope = typeof raw === 'number' && Number.isFinite(raw) ? raw : Infinity;
+      let slope: number;
+      if (resolved.entry.item.kind === 'implicit') {
+        const exact = this.implicitTangentSlope(resolved.entry, px, py);
+        slope = exact === null ? NaN : exact;
+      } else {
+        const raw = resolved.tangent.line.getSlope();
+        slope = typeof raw === 'number' && Number.isFinite(raw) ? raw : Infinity;
+      }
+      if (Number.isNaN(slope)) {
+        const raw = resolved.tangent.line.getSlope();
+        slope = typeof raw === 'number' && Number.isFinite(raw) ? raw : Infinity;
+      }
       const vertical = !Number.isFinite(slope);
       return {
         px,
@@ -711,7 +739,6 @@ export class Board2DController {
     if (!info) return null;
     return info.vertical ? Math.PI / 2 : Math.atan2(info.m, 1);
   }
-
   private syncTangentAngleConstraints(snapshot: BoardSnapshot): void {
     if (snapshot.tangentAngleConstraints.length === 0) {
       this.tangentConstraintStates.clear();
@@ -762,13 +789,25 @@ export class Board2DController {
         try {
           moving.tangent.glider.setPosition(JXG.COORDS_BY_USER, [point.x, point.y]);
           this.updateImplicitTangentLine(moving.entry, moving.tangent);
-          this.board.update();
-          this.callbacks.onTangentPointChange(movingRef.ownerId, movingRef.tangentId, point);
-          this.callbacks.onTangentMeta(
-            movingRef.ownerId,
-            movingRef.tangentId,
-            this.tangentMeta(moving.tangent.glider, moving.tangent.line),
-          );
+          if (moving.item.kind !== 'implicit') this.board.update();
+          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          const last = this.lastConstraintTargetReport.get(constraint.id) ?? 0;
+          const dragging =
+            this.draggingTangentRefs.has(
+              `${constraint.source.ownerId}:${constraint.source.tangentId}`,
+            ) ||
+            this.draggingTangentRefs.has(
+              `${constraint.target.ownerId}:${constraint.target.tangentId}`,
+            );
+          if (!dragging && now - last >= 80) {
+            this.lastConstraintTargetReport.set(constraint.id, now);
+            this.callbacks.onTangentPointChange(movingRef.ownerId, movingRef.tangentId, point);
+            this.callbacks.onTangentMeta(
+              movingRef.ownerId,
+              movingRef.tangentId,
+              this.tangentMeta(moving.tangent.glider, moving.tangent.line),
+            );
+          }
         } catch {
           // ignore transient tangent constraint errors
         }
@@ -825,6 +864,10 @@ export class Board2DController {
       lastTraceClearToken: mark.traceClearToken,
       lastShowTrace: mark.showTrace,
       lastPoint: null,
+      lastVisible: false,
+      lastColor: '',
+      lastCoordinates: false,
+      lastLabelReport: 0,
     };
     this.tangentIntersectionEntries.set(mark.id, entry);
     return entry;
@@ -851,6 +894,35 @@ export class Board2DController {
       // ignore
     }
     this.tangentIntersectionEntries.delete(entry.mark.id);
+  }
+
+  private reportConstraintCounterpart(ownerId: string, tangentId: string): void {
+    if (this.disposed) return;
+    for (const constraint of this.state.tangentAngleConstraints) {
+      const isSource =
+        constraint.source.ownerId === ownerId && constraint.source.tangentId === tangentId;
+      const isTarget =
+        constraint.target.ownerId === ownerId && constraint.target.tangentId === tangentId;
+      if (!isSource && !isTarget) continue;
+      const ref = isSource ? constraint.target : constraint.source;
+      const resolved = this.resolveTangent(ref);
+      if (!resolved) continue;
+      try {
+        const point = { x: resolved.tangent.glider.X(), y: resolved.tangent.glider.Y() };
+        this.callbacks.onTangentPointChange(ref.ownerId, ref.tangentId, point);
+        this.callbacks.onTangentMeta(
+          ref.ownerId,
+          ref.tangentId,
+          this.tangentMeta(resolved.tangent.glider, resolved.tangent.line),
+        );
+        this.lastConstraintTargetReport.set(
+          constraint.id,
+          typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        );
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private clearTangentTracesFor(ownerId: string, tangentId: string): void {
@@ -893,30 +965,52 @@ export class Board2DController {
       entry.lastTraceClearToken = mark.traceClearToken;
       entry.lastShowTrace = mark.showTrace;
 
+      const pointChanged =
+        !entry.lastPoint ||
+        Math.hypot(entry.lastPoint.x - (hit?.x ?? 0), entry.lastPoint.y - (hit?.y ?? 0)) >
+          1e-5;
+      const styleChanged =
+        entry.lastVisible !== mark.visible ||
+        entry.lastColor !== mark.color ||
+        entry.lastCoordinates !== mark.showCoordinates;
       if (hit) {
-        try {
-          entry.point.setAttribute({
-            visible: mark.visible,
-            fillColor: mark.color,
-            strokeColor: '#ffffff',
-          });
-          entry.point.setPosition(JXG.COORDS_BY_USER, [hit.x, hit.y]);
-          entry.label.setAttribute({
-            visible: mark.visible && mark.showCoordinates,
-            strokeColor: mark.color,
-          });
-          entry.label.setText(`(${formatNumber(hit.x)}, ${formatNumber(hit.y)})`);
-          entry.label.setPosition(JXG.COORDS_BY_USER, [hit.x + 0.22, hit.y + 0.22]);
-        } catch {
-          // ignore
+        if (pointChanged || styleChanged) {
+          try {
+            if (styleChanged) {
+              entry.point.setAttribute({
+                visible: mark.visible,
+                fillColor: mark.color,
+                strokeColor: '#ffffff',
+              });
+              entry.label.setAttribute({
+                visible: mark.visible && mark.showCoordinates,
+                strokeColor: mark.color,
+              });
+            }
+            if (pointChanged) {
+              entry.point.setPosition(JXG.COORDS_BY_USER, [hit.x, hit.y]);
+              const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+              if (now - entry.lastLabelReport >= 100) {
+                entry.lastLabelReport = now;
+                entry.label.setText(`(${formatNumber(hit.x)}, ${formatNumber(hit.y)})`);
+                entry.label.setPosition(JXG.COORDS_BY_USER, [hit.x + 0.22, hit.y + 0.22]);
+              }
+            }
+          } catch {
+            // ignore
+          }
         }
-      } else {
+        entry.lastVisible = mark.visible;
+        entry.lastColor = mark.color;
+        entry.lastCoordinates = mark.showCoordinates;
+      } else if (entry.lastVisible) {
         try {
           entry.point.setAttribute({ visible: false });
           entry.label.setAttribute({ visible: false });
         } catch {
           // ignore
         }
+        entry.lastVisible = false;
       }
 
       if (!entry.trace) {
@@ -1016,11 +1110,19 @@ export class Board2DController {
     return best && best.distancePx <= tolerancePx ? best : null;
   }
 
-  private destroyMarkedPointEntry(entry: MarkedPointEntry): void {
-    try {
-      this.board.removeObject(entry.glider);
-    } catch {
-      // ignore
+  private destroyMarkedPointEntry(entry: MarkedPointEntry): void {    if (entry.owned) {
+      try {
+        this.board.removeObject(entry.glider);
+      } catch {
+        // ignore
+      }
+    }
+    if (entry.label) {
+      try {
+        this.board.removeObject(entry.label);
+      } catch {
+        // ignore
+      }
     }
     this.markedPointEntries.delete(entry.marked.id);
   }
@@ -1030,7 +1132,7 @@ export class Board2DController {
     curve: AnyElement,
   ): MarkedPointEntry | null {
     const existing = this.markedPointEntries.get(marked.id);
-    if (existing && existing.curve === curve) return existing;
+    if (existing && existing.curve === curve && existing.owned) return existing;
     if (existing) this.destroyMarkedPointEntry(existing);
     try {
       const glider = this.board.create('glider', [marked.point.x, marked.point.y, curve], {
@@ -1049,7 +1151,19 @@ export class Board2DController {
           strokeColor: '#0f766e',
         },
       });
-      const entry: MarkedPointEntry = { marked, glider, curve };
+      const entry: MarkedPointEntry = {
+        marked,
+        glider,
+        curve,
+        owned: true,
+        label: null,
+        direction: 1,
+        lastVisible: false,
+        lastName: '',
+        lastX: NaN,
+        lastY: NaN,
+        lastLabelReport: 0,
+      };
       glider.on('down', () => {
         this.draggingPointIds.add(marked.id);
       });
@@ -1075,6 +1189,48 @@ export class Board2DController {
     }
   }
 
+  private ensureTangentMarkedPointEntry(
+    marked: MarkedPoint,
+    tangent: TangentElements,
+    curve: AnyElement,
+  ): MarkedPointEntry | null {
+    if (!tangent) return null;
+    const existing = this.markedPointEntries.get(marked.id);
+    if (existing && !existing.owned && existing.glider === tangent.glider) {
+      return existing;
+    }
+    if (existing) this.destroyMarkedPointEntry(existing);
+    try {
+      const label = this.board.create('text', [0, 0, marked.name], {
+        fontSize: 12,
+        strokeColor: '#0f766e',
+        fixed: true,
+        highlight: false,
+        withLabel: false,
+        showInfobox: false,
+        layer: 9,
+      });
+      const entry: MarkedPointEntry = {
+        marked,
+        glider: tangent.glider,
+        curve,
+        owned: false,
+        label,
+        direction: 1,
+        lastVisible: false,
+        lastName: '',
+        lastX: NaN,
+        lastY: NaN,
+        lastLabelReport: 0,
+      };
+      this.markedPointEntries.set(marked.id, entry);
+      return entry;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  }
+
   private syncMarkedPoints(snapshot: BoardSnapshot): void {
     const seen = new Set<string>();
     for (const marked of snapshot.markedPoints) {
@@ -1085,17 +1241,64 @@ export class Board2DController {
         if (existing) this.destroyMarkedPointEntry(existing);
         continue;
       }
+      if (marked.source === 'tangent') {
+        const tangent = marked.tangentId
+          ? expression.tangents.get(marked.tangentId)
+          : undefined;
+        if (!tangent) {
+          const existing = this.markedPointEntries.get(marked.id);
+          if (existing) this.destroyMarkedPointEntry(existing);
+          continue;
+        }
+        const entry = this.ensureTangentMarkedPointEntry(
+          marked,
+          tangent,
+          expression.curve,
+        );
+        if (!entry) continue;
+        entry.marked = marked;
+        const visible = marked.visible && expression.item.visible;
+        try {
+          const labelX = tangent.glider.X() + 0.18;
+          const labelY = tangent.glider.Y() + 0.18;
+          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          const moved =
+            Math.abs(labelX - entry.lastX) > 1e-4 ||
+            Math.abs(labelY - entry.lastY) > 1e-4;
+          if (
+            entry.lastVisible !== visible ||
+            entry.lastName !== marked.name ||
+            (moved && now - entry.lastLabelReport >= 250)
+          ) {
+            entry.label?.setAttribute({ visible });
+            entry.label?.setText?.(marked.name);
+            entry.label?.setPosition(JXG.COORDS_BY_USER, [labelX, labelY]);
+            entry.lastVisible = visible;
+            entry.lastName = marked.name;
+            entry.lastX = labelX;
+            entry.lastY = labelY;
+            entry.lastLabelReport = now;
+          }
+        } catch {
+          // ignore
+        }
+        continue;
+      }
       const entry = this.ensureMarkedPointEntry(marked, expression.curve);
       if (!entry) continue;
       entry.marked = marked;
       const visible = marked.visible && expression.item.visible;
       try {
-        entry.glider.setAttribute({
-          visible,
-          fillColor: '#0f766e',
-          name: marked.name,
-        });
-        entry.glider.label?.setText?.(marked.name);
+        if (entry.lastVisible !== visible || entry.lastName !== marked.name) {
+          entry.glider.setAttribute({
+            visible,
+            fillColor: '#0f766e',
+            name: marked.name,
+          });
+          entry.glider.label?.setText?.(marked.name);
+          entry.lastVisible = visible;
+          entry.lastName = marked.name;
+        }
         if (
           !this.draggingPointIds.has(marked.id) &&
           (Math.abs(entry.glider.X() - marked.point.x) > 1e-4 ||
@@ -1200,6 +1403,187 @@ export class Board2DController {
     return entry;
   }
 
+  public setAutoMove(enabled: boolean): void {
+    if (this.disposed) return;
+    if (enabled && this.autoMoveTimer === null) {
+      this.autoMoveTimer = window.setInterval(() => this.advanceMarkedPoints(), 33);
+    } else if (!enabled && this.autoMoveTimer !== null) {
+      window.clearInterval(this.autoMoveTimer);
+      this.autoMoveTimer = null;
+    }
+  }
+
+  private nearestParametricT(
+    item: Extract<Item2D, { kind: 'parametric' }>,
+    analysis: ParametricAnalysis,
+    point: Point2,
+  ): number {
+    if (!analysis.x.ok || !analysis.y.ok) return item.tMin;
+    const xAnalysis = analysis.x;
+    const yAnalysis = analysis.y;
+    const samples = 500;
+    let bestT = item.tMin;
+    let bestDistance = Infinity;
+    for (let index = 0; index <= samples; index += 1) {
+      const t = item.tMin + ((item.tMax - item.tMin) * index) / samples;
+      const scope = this.scope({ t });
+      const x = xAnalysis.evaluate(scope);
+      const y = yAnalysis.evaluate(scope);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const distance = Math.hypot(x - point.x, y - point.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestT = t;
+      }
+    }
+    return bestT;
+  }
+
+  private insideView(point: Point2, margin = 0): boolean {
+    const bb = this.getBoundingBox();
+    return (
+      point.x > Math.min(bb[0], bb[2]) + margin &&
+      point.x < Math.max(bb[0], bb[2]) - margin &&
+      point.y > Math.min(bb[1], bb[3]) + margin &&
+      point.y < Math.max(bb[1], bb[3]) - margin
+    );
+  }
+
+  private projectImplicit(
+    evaluate: (x: number, y: number) => number,
+    point: Point2,
+  ): Point2 | null {
+    let x = point.x;
+    let y = point.y;
+    for (let iteration = 0; iteration < 5; iteration += 1) {
+      const value = evaluate(x, y);
+      if (!Number.isFinite(value)) return null;
+      const h = 1e-4 * Math.max(1, Math.abs(x), Math.abs(y));
+      const fx = (evaluate(x + h, y) - evaluate(x - h, y)) / (2 * h);
+      const fy = (evaluate(x, y + h) - evaluate(x, y - h)) / (2 * h);
+      const norm = fx * fx + fy * fy;
+      if (!Number.isFinite(norm) || norm < 1e-12) return null;
+      x -= (value / norm) * fx;
+      y -= (value / norm) * fy;
+      if (Math.abs(value) < 1e-10) break;
+    }
+    return { x, y };
+  }
+
+  private advanceCurvePoint(
+    entry: MarkedPointEntry,
+    point: Point2,
+    step: number,
+  ): { point: Point2; direction: 1 | -1 } | null {
+    const expression = this.entries.get(entry.marked.ownerId);
+    if (!expression) return null;
+    const item = expression.item;
+    const tryDirection = (direction: 1 | -1): { point: Point2; direction: 1 | -1 } | null => {
+      if (item.kind === 'explicit') {
+        const analysis = expression.analysis as ExplicitAnalysis;
+        if (!analysis.expr.ok) return null;
+        const nextX = point.x + direction * step;
+        const bb = this.getBoundingBox();
+        const xMin = Math.min(bb[0], bb[2]) + 0.02;
+        const xMax = Math.max(bb[0], bb[2]) - 0.02;
+        const x = nextX;
+        if (x < xMin || x > xMax) return null;
+        const y = analysis.expr.evaluate(this.scope({ x }));
+        if (!Number.isFinite(y) || !this.insideView({ x, y })) return null;
+        return { point: { x, y }, direction };
+      }
+      if (item.kind === 'parametric') {
+        const analysis = expression.analysis as ParametricAnalysis;
+        if (!analysis.x.ok || !analysis.y.ok) return null;
+        const range = item.tMax - item.tMin;
+        if (range <= 0) return null;
+        if (entry.parameter === undefined) {
+          entry.parameter = this.nearestParametricT(item, analysis, point);
+        }
+        const t = entry.parameter + direction * (range / 240);
+        if (t < item.tMin || t > item.tMax) return null;
+        const next = {
+          x: analysis.x.evaluate(this.scope({ t })),
+          y: analysis.y.evaluate(this.scope({ t })),
+        };
+        if (!Number.isFinite(next.x) || !Number.isFinite(next.y)) return null;
+        if (!this.insideView(next)) return null;
+        entry.parameter = t;
+        return { point: next, direction };
+      }
+      const analysis = expression.analysis as ImplicitAnalysis;
+      if (!analysis.expr.ok) return null;
+      const evaluate = (x: number, y: number) =>
+        analysis.expr.ok ? analysis.expr.evaluate(this.scope({ x, y })) : NaN;
+      const h = 1e-4 * Math.max(1, Math.abs(point.x), Math.abs(point.y));
+      const fx = (evaluate(point.x + h, point.y) - evaluate(point.x - h, point.y)) / (2 * h);
+      const fy = (evaluate(point.x, point.y + h) - evaluate(point.x, point.y - h)) / (2 * h);
+      const length = Math.hypot(fx, fy);
+      if (!Number.isFinite(length) || length < 1e-10) return null;
+      const candidate = this.projectImplicit(evaluate, {
+        x: point.x + direction * (-fy / length) * step,
+        y: point.y + direction * (fx / length) * step,
+      });
+      if (!candidate || !this.insideView(candidate)) return null;
+      return { point: candidate, direction };
+    };
+    const forward = tryDirection(entry.direction);
+    if (forward) return forward;
+    const direction: 1 | -1 = entry.direction === 1 ? -1 : 1;
+    entry.direction = direction;
+    return tryDirection(direction);
+  }
+
+  private advanceMarkedPoints(): void {
+    if (this.disposed || this.markedPointEntries.size === 0) return;
+    const targetRefs = new Set(
+      this.state.tangentAngleConstraints.map(
+        (constraint) =>
+          `${constraint.target.ownerId}:${constraint.target.tangentId}`,
+      ),
+    );
+    const step = 0.055;
+    for (const entry of this.markedPointEntries.values()) {
+      const marked = entry.marked;
+      if (!marked.visible || this.draggingPointIds.has(marked.id)) continue;
+      const owner = this.entries.get(marked.ownerId);
+      if (!owner?.item.visible) continue;
+      if (
+        marked.source === 'tangent' &&
+        marked.tangentOwnerId &&
+        marked.tangentId &&
+        (targetRefs.has(`${marked.tangentOwnerId}:${marked.tangentId}`) ||
+          this.draggingTangentRefs.has(`${marked.tangentOwnerId}:${marked.tangentId}`))
+      ) {
+        continue;
+      }
+      try {
+        const point = { x: entry.glider.X(), y: entry.glider.Y() };
+        const advanced = this.advanceCurvePoint(entry, point, step);
+        if (!advanced) continue;
+        if (marked.source === 'tangent' && marked.tangentOwnerId && marked.tangentId) {
+          const expression = this.entries.get(marked.ownerId);
+          const tangent = expression?.tangents.get(marked.tangentId);
+          if (!tangent) continue;
+          tangent.glider.setPosition(JXG.COORDS_BY_USER, [advanced.point.x, advanced.point.y]);
+          if (expression) this.updateImplicitTangentLine(expression, tangent);
+          this.callbacks.onTangentPointChange(marked.tangentOwnerId, marked.tangentId, advanced.point);
+          this.callbacks.onTangentMeta(
+            marked.tangentOwnerId,
+            marked.tangentId,
+            this.tangentMeta(tangent.glider, tangent.line),
+          );
+        } else {
+          entry.glider.setPosition(JXG.COORDS_BY_USER, [advanced.point.x, advanced.point.y]);
+          this.callbacks.onMarkedPointChange(marked.id, advanced.point);
+        }
+      } catch {
+        // skip transient point errors
+      }
+    }
+    this.requestTraceRedraw();
+  }
+
   private syncDivisionMarks(snapshot: BoardSnapshot): void {
     const seen = new Set<string>();
     for (const mark of snapshot.divisionMarks) {
@@ -1289,6 +1673,7 @@ export class Board2DController {
         tangents: new Map(),
         kind: item.kind,
         rangeKey: '',
+        curveStyleKey: '',
       };
       this.entries.set(item.id, entry);
     }
@@ -1301,7 +1686,6 @@ export class Board2DController {
     const entry = this.getEntry(item);
     const valid = entry.analysis.errors.length === 0;
     const visible = item.visible && valid;
-
     if (item.kind === 'explicit') {
       this.syncExplicit(entry, item, visible);
     } else if (item.kind === 'parametric') {
@@ -1309,9 +1693,20 @@ export class Board2DController {
     } else {
       this.syncImplicit(entry, item, visible);
     }
-
     this.syncTangents(entry, visible);
-    this.applyCurveVisibility(entry, visible);
+  }
+
+  private applyCurveStyle(entry: ExpressionEntry, item: Item2D, visible: boolean): void {
+    if (!entry.curve) return;
+    const key = `${item.color}|${visible}`;
+    if (entry.curveStyleKey === key) return;
+    entry.curve.setAttribute({
+      strokeColor: item.color,
+      visible,
+      strokeWidth: 2.6,
+      fixed: true,
+    });
+    entry.curveStyleKey = key;
   }
 
   private evalExplicit(entry: ExpressionEntry, x: number): number {
@@ -1337,6 +1732,7 @@ export class Board2DController {
           },
         );
         entry.rangeKey = 'function';
+        entry.curveStyleKey = '';
       } catch (error) {
         this.callbacks.onBoardError('函数曲线创建失败');
         console.error(error);
@@ -1344,12 +1740,7 @@ export class Board2DController {
     }
 
     if (entry.curve) {
-      entry.curve.setAttribute({
-        strokeColor: item.color,
-        visible,
-        strokeWidth: 2.6,
-        fixed: true,
-      });
+      this.applyCurveStyle(entry, item, visible);
     }
 
     const analysis = entry.analysis as ExplicitAnalysis;
@@ -1429,18 +1820,14 @@ export class Board2DController {
           },
         );
         entry.rangeKey = rangeKey;
+        entry.curveStyleKey = '';
       } catch (error) {
         this.callbacks.onBoardError('参数曲线创建失败');
         console.error(error);
       }
     }
     if (entry.curve) {
-      entry.curve.setAttribute({
-        strokeColor: item.color,
-        visible,
-        strokeWidth: 2.6,
-        fixed: true,
-      });
+      this.applyCurveStyle(entry, item, visible);
     }
     if (entry.derivative) {
       this.board.removeObject(entry.derivative);
@@ -1473,27 +1860,19 @@ export class Board2DController {
           },
         );
         entry.rangeKey = 'implicit';
+        entry.curveStyleKey = '';
       } catch (error) {
         this.callbacks.onBoardError('隐式曲线创建失败');
         console.error(error);
       }
     }
     if (entry.curve) {
-      entry.curve.setAttribute({
-        strokeColor: item.color,
-        visible,
-        strokeWidth: 2.6,
-        fixed: true,
-      });
+      this.applyCurveStyle(entry, item, visible);
     }
     if (entry.derivative) {
       this.board.removeObject(entry.derivative);
       entry.derivative = null;
     }
-  }
-
-  private applyCurveVisibility(entry: ExpressionEntry, visible: boolean): void {
-    if (entry.curve) entry.curve.setAttribute({ visible });
   }
 
   private defaultTangentPoint(
@@ -1667,8 +2046,11 @@ export class Board2DController {
     for (const [index, tangent] of entry.item.tangents.entries()) {
       const existing = entry.tangents.get(tangent.id);
       if (existing) {
-        existing.glider.setAttribute({ visible });
-        existing.line.setAttribute({ visible });
+        if (existing.visible !== visible) {
+          existing.glider.setAttribute({ visible });
+          existing.line.setAttribute({ visible });
+          existing.visible = visible;
+        }
         this.updateImplicitTangentLine(entry, existing);
         continue;
       }
@@ -1734,8 +2116,10 @@ export class Board2DController {
           line,
           pointBeforeDrag: null,
           helper: helper ?? undefined,
+          visible,
         };
         entry.tangents.set(tangent.id, elements);
+        let lastDragReport = 0;
         this.updateImplicitTangentLine(entry, elements);
         const pushPoint = () => {
           const current = entry.tangents.get(tangent.id);
@@ -1752,6 +2136,9 @@ export class Board2DController {
         glider.on('drag', () => {
           const current = entry.tangents.get(tangent.id);
           if (!current) return;
+          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          if (now - lastDragReport < 32) return;
+          lastDragReport = now;
           this.updateImplicitTangentLine(entry, current);
           const px = current.glider.X();
           const py = current.glider.Y();
@@ -1760,12 +2147,27 @@ export class Board2DController {
           }
         });
         glider.on('down', () => {
+          this.draggingTangentRefs.add(`${entry.id}:${tangent.id}`);
           this.clearTangentTracesFor(entry.id, tangent.id);
         });
         glider.on('up', () => {
+          const current = entry.tangents.get(tangent.id);
+          if (current) {
+            const px = current.glider.X();
+            const py = current.glider.Y();
+            if (Number.isFinite(px) && Number.isFinite(py)) {
+              this.callbacks.onTangentPointChange(entry.id, tangent.id, { x: px, y: py });
+            }
+          }
           pushPoint();
+          this.draggingTangentRefs.delete(`${entry.id}:${tangent.id}`);
+          window.setTimeout(() => this.reportConstraintCounterpart(entry.id, tangent.id), 60);
         });
         pushPoint();
+        this.callbacks.onTangentPointChange(entry.id, tangent.id, {
+          x: glider.X(),
+          y: glider.Y(),
+        });
       } catch (error) {
         console.error('Tangent creation failed', error);
       }
@@ -2500,7 +2902,7 @@ export class Board2DController {
           withLabel: false,
           layer: 7,
         });
-        entry.tangents.set(tangent.id, { glider, line, pointBeforeDrag: null });
+        entry.tangents.set(tangent.id, { glider, line, pointBeforeDrag: null, visible });
         const pushMeta = () => {
           try {
             this.callbacks.onTangentMeta(
@@ -2630,6 +3032,10 @@ export class Board2DController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.autoMoveTimer !== null) {
+      window.clearInterval(this.autoMoveTimer);
+      this.autoMoveTimer = null;
+    }
     if (this.viewTimer) window.clearTimeout(this.viewTimer);
     if (this.traceFrame !== null) {
       window.cancelAnimationFrame(this.traceFrame);

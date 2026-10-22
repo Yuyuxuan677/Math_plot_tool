@@ -55,6 +55,7 @@ export interface AppState {
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;
   viewResetToken: number;
+  autoMovePoints: boolean;
 
   selectedId: string | null;
   expandedId: string | null;
@@ -78,6 +79,7 @@ export interface AppState {
   setHelpOpen: (open: boolean) => void;
   setLocusOwnerId: (id: string | null) => void;
   setSnapToGrid: (snap: boolean) => void;
+  setAutoMovePoints: (enabled: boolean) => void;
   setView2D: (bbox: [number, number, number, number] | null) => void;
   requestViewReset: () => void;
   setParamValue: (name: string, value: string) => void;
@@ -295,20 +297,66 @@ export function applyLineAngleConstraints(geometry: Geometry[]): Geometry[] {
 
 const persisted = loadPersistedState();
 
+function initialMarkedPoints(
+  items2d: Item2D[],
+  existing: MarkedPoint[],
+): MarkedPoint[] {
+  const result = [...existing];
+  const tangentKeys = new Set<string>();
+  for (const item of items2d) {
+    for (const tangent of item.tangents) {
+      const ownerId = item.id;
+      const key = `${ownerId}:${tangent.id}`;
+      tangentKeys.add(key);
+      if (
+        result.some(
+          (point) =>
+            point.source === 'tangent' &&
+            point.tangentOwnerId === ownerId &&
+            point.tangentId === tangent.id,
+        )
+      ) {
+        continue;
+      }
+      result.push({
+        id: uid('pt'),
+        ownerId,
+        source: 'tangent',
+        tangentOwnerId: ownerId,
+        tangentId: tangent.id,
+        name: nextMarkedPointName(result),
+        point: tangent.point ?? { x: 0, y: 0 },
+        visible: true,
+      });
+    }
+  }
+  return result.filter(
+    (point) =>
+      point.source !== 'tangent' ||
+      (point.tangentOwnerId &&
+        point.tangentId &&
+        tangentKeys.has(`${point.tangentOwnerId}:${point.tangentId}`)),
+  );
+}
+
+const initialItems2d = persisted?.items2d ?? [];
+const initialPoints = initialMarkedPoints(initialItems2d, persisted?.markedPoints ?? []);
+
 export const useAppStore = create<AppState>((set, get) => ({
   mode: persisted?.mode ?? '2d',
-  items2d: persisted?.items2d ?? [],
+  items2d: initialItems2d,
   items3d: persisted?.items3d ?? [],
   geometry: persisted?.geometry ?? [],
   intersections: persisted?.intersections ?? [],
   tangentIntersections: persisted?.tangentIntersections ?? [],
   tangentAngleConstraints: persisted?.tangentAngleConstraints ?? [],
-  markedPoints: persisted?.markedPoints ?? [],
+  markedPoints: initialPoints,
   divisionMarks: persisted?.divisionMarks ?? [],
   paramValues: persisted?.paramValues ?? initialParamValues(),
   view2dBoundingBox: persisted?.view2dBoundingBox ?? null,
   snapToGrid: persisted?.snapToGrid ?? true,
   viewResetToken: 0,
+  autoMovePoints: false,
 
   selectedId: null,
   expandedId: null,
@@ -332,6 +380,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setHelpOpen: (helpOpen) => set({ helpOpen }),
   setLocusOwnerId: (locusOwnerId) => set({ locusOwnerId }),
   setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
+  setAutoMovePoints: (autoMovePoints) => set({ autoMovePoints }),
   setView2D: (view2dBoundingBox) => set({ view2dBoundingBox }),
   requestViewReset: () => set((state) => ({ viewResetToken: state.viewResetToken + 1 })),
   setParamValue: (name, value) =>
@@ -713,8 +762,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       target: { ownerId: refs[1].ownerId, tangentId: refs[1].tangentId },
       angleDeg: 90,
     };
+    const matches = (mark: TangentIntersectionMark) =>
+      (mark.a.ownerId === constraint.source.ownerId &&
+        mark.a.tangentId === constraint.source.tangentId &&
+        mark.b.ownerId === constraint.target.ownerId &&
+        mark.b.tangentId === constraint.target.tangentId) ||
+      (mark.a.ownerId === constraint.target.ownerId &&
+        mark.a.tangentId === constraint.target.tangentId &&
+        mark.b.ownerId === constraint.source.ownerId &&
+        mark.b.tangentId === constraint.source.tangentId);
+    const existing = state.tangentIntersections.find(matches);
+    const tangentIntersections = existing
+      ? state.tangentIntersections.map((mark) =>
+          mark.id === existing.id ? { ...mark, showTrace: true } : mark,
+        )
+      : [
+          ...state.tangentIntersections,
+          {
+            id: uid('tix'),
+            a: { ...constraint.source },
+            b: { ...constraint.target },
+            color: pickColor([
+              ...state.items2d.map((item) => item.color),
+              ...state.tangentIntersections.map((item) => item.color),
+            ]),
+            visible: true,
+            showCoordinates: true,
+            showTrace: true,
+            traceClearToken: 0,
+          },
+        ];
     set({
       tangentAngleConstraints: [...state.tangentAngleConstraints, constraint],
+      tangentIntersections,
       expandedId: constraint.id,
       selectedId: constraint.id,
       addMenuOpen: false,
@@ -744,6 +824,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const marked: MarkedPoint = {
       id: uid('pt'),
       ownerId,
+      source: 'manual',
       name: nextMarkedPointName(state.markedPoints),
       point: { x: point.x, y: point.y },
       visible: true,
@@ -820,6 +901,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   addTangent: (ownerId) =>
     set((state) => {
       const tangent = { id: uid('tan'), point: null };
+      const marker: MarkedPoint = {
+        id: uid('pt'),
+        ownerId,
+        source: 'tangent',
+        tangentOwnerId: ownerId,
+        tangentId: tangent.id,
+        name: nextMarkedPointName(state.markedPoints),
+        point: { x: 0, y: 0 },
+        visible: true,
+      };
       return {
         items2d: state.items2d.map((item) =>
           item.id === ownerId ? { ...item, tangents: [...item.tangents, tangent] } : item,
@@ -827,7 +918,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         geometry: state.geometry.map((item) =>
           item.id === ownerId ? { ...item, tangents: [...item.tangents, tangent] } : item,
         ),
-        expandedId: ownerId,
+        markedPoints: [...state.markedPoints, marker],
       };
     }),
 
@@ -835,6 +926,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const keep = (ref: { ownerId: string; tangentId: string }) =>
         !(ref.ownerId === ownerId && ref.tangentId === tangentId);
+      const removedMarkerIds = new Set(
+        state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'tangent' &&
+              point.tangentOwnerId === ownerId &&
+              point.tangentId === tangentId,
+          )
+          .map((point) => point.id),
+      );
       return {
         items2d: state.items2d.map((item) =>
           item.id === ownerId
@@ -851,6 +952,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
         tangentAngleConstraints: state.tangentAngleConstraints.filter(
           (constraint) => keep(constraint.source) && keep(constraint.target),
+        ),
+        markedPoints: state.markedPoints.filter((point) => !removedMarkerIds.has(point.id)),
+        divisionMarks: state.divisionMarks.filter(
+          (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
         ),
       };
     }),
@@ -876,6 +981,13 @@ export const useAppStore = create<AppState>((set, get) => ({
               ),
             }
           : item,
+      ),
+      markedPoints: state.markedPoints.map((marker) =>
+        marker.source === 'tangent' &&
+        marker.tangentOwnerId === ownerId &&
+        marker.tangentId === tangentId
+          ? { ...marker, point }
+          : marker,
       ),
     })),
 
@@ -920,6 +1032,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       expandedId: null,
       activeTool: 'select',
       toolTrayOpen: false,
+      autoMovePoints: false,
       sheetExpanded: false,
       helpOpen: false,
       locusOwnerId: null,
