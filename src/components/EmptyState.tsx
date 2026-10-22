@@ -11,6 +11,7 @@ export function EmptyState() {
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
   const geometry = useAppStore((state) => state.geometry);
+  const intersections = useAppStore((state) => state.intersections);
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
   const updateItem2D = useAppStore((state) => state.updateItem2D);
@@ -18,7 +19,10 @@ export function EmptyState() {
   const setSheetExpanded = useAppStore((state) => state.setSheetExpanded);
   const showToast = useAppStore((state) => state.showToast);
 
-  const hasContent = mode === '2d' ? items2d.length + geometry.length > 0 : items3d.length > 0;
+  const hasContent =
+    mode === '2d'
+      ? items2d.length + geometry.length + intersections.length > 0
+      : items3d.length > 0;
   if (hasContent) return null;
 
   const finish = (message: string) => {

@@ -13,6 +13,7 @@ import type {
   Item2DKind,
   Item3D,
   Item3DKind,
+  IntersectionMark,
   LineShape,
   Mode,
   Orientation,
@@ -23,6 +24,7 @@ import type {
   SurfaceItem,
   Tool,
 } from './types';
+import { buildCurveRefs } from './curveRefs';
 import { loadPersistedState } from './persistence';
 import { clearExpressionCaches } from '../core/expression/analyze';
 
@@ -37,6 +39,7 @@ export interface AppState {
   items2d: Item2D[];
   items3d: Item3D[];
   geometry: Geometry[];
+  intersections: IntersectionMark[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;
@@ -85,6 +88,9 @@ export interface AppState {
   addParabola: (vertex: Point2, point: Point2) => string;
   addHyperbola: (center: Point2, corner: Point2, orientation: Orientation) => string;
   updateGeometry: (id: string, patch: Partial<Geometry>) => void;
+  addIntersection: () => string | null;
+  updateIntersection: (id: string, patch: Partial<IntersectionMark>) => void;
+  removeIntersection: (id: string) => void;
 
   addTangent: (ownerId: string) => void;
   removeTangent: (ownerId: string, tangentId: string) => void;
@@ -199,6 +205,52 @@ function geometryDefaults(kind: GeometryKind, color: string): GeometryBaseFields
 
 type GeometryBaseFields = Pick<Geometry, 'id' | 'kind' | 'color' | 'visible' | 'showEquation' | 'tangents'>;
 
+function lineCenter(shape: LineShape): Point2 {
+  return { x: (shape.a.x + shape.b.x) / 2, y: (shape.a.y + shape.b.y) / 2 };
+}
+
+function lineAngle(shape: LineShape): number {
+  return Math.atan2(shape.b.y - shape.a.y, shape.b.x - shape.a.x);
+}
+
+export function applyLineAngleConstraints(geometry: Geometry[]): Geometry[] {
+  const result = [...geometry];
+  for (let index = 0; index < result.length; index += 1) {
+    const target = result[index];
+    if (target.kind !== 'line' || !target.angleConstraint) continue;
+    const constraint = target.angleConstraint;
+    if (!constraint.sourceId || constraint.sourceId === target.id) continue;
+    const source = result.find((item) => item.id === constraint.sourceId);
+    if (!source || source.kind !== 'line') continue;
+    const length = Math.hypot(target.b.x - target.a.x, target.b.y - target.a.y);
+    if (!Number.isFinite(length) || length < 1e-9) continue;
+    const sourceCenter = lineCenter(source);
+    const desiredCenter = {
+      x: sourceCenter.x + (constraint.offset?.x ?? 0),
+      y: sourceCenter.y + (constraint.offset?.y ?? 0),
+    };
+    const desiredAngle = lineAngle(source) + (constraint.angleDeg * Math.PI) / 180;
+    const halfX = (Math.cos(desiredAngle) * length) / 2;
+    const halfY = (Math.sin(desiredAngle) * length) / 2;
+    const nextA = { x: desiredCenter.x - halfX, y: desiredCenter.y - halfY };
+    const nextB = { x: desiredCenter.x + halfX, y: desiredCenter.y + halfY };
+    if (
+      Math.hypot(nextA.x - target.a.x, nextA.y - target.a.y) < 1e-9 &&
+      Math.hypot(nextB.x - target.b.x, nextB.y - target.b.y) < 1e-9
+    ) {
+      continue;
+    }
+    result[index] = {
+      ...target,
+      a: nextA,
+      b: nextB,
+      driverPoint: null,
+      traceClearToken: target.traceClearToken + 1,
+    };
+  }
+  return result;
+}
+
 const persisted = loadPersistedState();
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -206,6 +258,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   items2d: persisted?.items2d ?? [],
   items3d: persisted?.items3d ?? [],
   geometry: persisted?.geometry ?? [],
+  intersections: persisted?.intersections ?? [],
   paramValues: persisted?.paramValues ?? initialParamValues(),
   view2dBoundingBox: persisted?.view2dBoundingBox ?? null,
   snapToGrid: persisted?.snapToGrid ?? true,
@@ -304,11 +357,25 @@ export const useAppStore = create<AppState>((set, get) => ({
         items3d: state.items3d.filter((item) => item.id !== id),
         geometry: state.geometry
           .filter((item) => item.id !== id)
-          .map((item) =>
-            item.kind === 'line' && item.driverCurveId === id
-              ? { ...item, driverCurveId: null, driverPoint: null }
-              : item,
-          ),
+          .map((item) => {
+            if (item.kind !== 'line') return item;
+            if (item.driverCurveId === id) {
+              return {
+                ...item,
+                driverCurveId: null,
+                driverPoint: null,
+                angleConstraint:
+                  item.angleConstraint?.sourceId === id ? null : item.angleConstraint,
+              };
+            }
+            if (item.angleConstraint?.sourceId === id) {
+              return { ...item, angleConstraint: null };
+            }
+            return item;
+          }),
+        intersections: state.intersections.filter(
+          (item) => item.id !== id && item.aId !== id && item.bId !== id,
+        ),
       };
       if (state.expandedId === id) next.expandedId = null;
       if (state.selectedId === id) next.selectedId = null;
@@ -377,6 +444,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       movingEndpoint: 'B',
       driverCurveId: null,
       driverPoint: null,
+      angleConstraint: null,
     };
     set({
       geometry: [...state.geometry, shape],
@@ -470,11 +538,61 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   updateGeometry: (id, patch) =>
-    set((state) => ({
-      geometry: state.geometry.map((item) =>
+    set((state) => {
+      const geometry = state.geometry.map((item) =>
         item.id === id ? ({ ...item, ...patch } as Geometry) : item,
+      );
+      return { geometry: applyLineAngleConstraints(geometry) };
+    }),
+
+  addIntersection: () => {
+    const state = get();
+    const refs = buildCurveRefs(state.items2d, state.geometry);
+    if (refs.length < 2) {
+      state.showToast('至少需要两条曲线或直线才能标记交点', 'error');
+      return null;
+    }
+    const mark: IntersectionMark = {
+      id: uid('ix'),
+      aId: refs[0].id,
+      bId: refs[1].id,
+      color: pickColor([
+        ...state.items2d.map((item) => item.color),
+        ...state.geometry.map((item) => item.color),
+        ...state.intersections.map((item) => item.color),
+      ]),
+      visible: true,
+      showCoordinates: true,
+      showTrace: false,
+      traceClearToken: 0,
+    };
+    set({
+      intersections: [...state.intersections, mark],
+      expandedId: mark.id,
+      selectedId: mark.id,
+      addMenuOpen: false,
+      sheetExpanded: false,
+      mode: '2d',
+    });
+    return mark.id;
+  },
+
+  updateIntersection: (id, patch) =>
+    set((state) => ({
+      intersections: state.intersections.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
       ),
     })),
+
+  removeIntersection: (id) =>
+    set((state) => {
+      const next: Partial<AppState> = {
+        intersections: state.intersections.filter((item) => item.id !== id),
+      };
+      if (state.expandedId === id) next.expandedId = null;
+      if (state.selectedId === id) next.selectedId = null;
+      return next;
+    }),
 
   addTangent: (ownerId) =>
     set((state) => {
@@ -558,6 +676,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       items2d: [],
       items3d: [],
       geometry: [],
+      intersections: [],
       paramValues: {},
       view2dBoundingBox: null,
       selectedId: null,

@@ -1,6 +1,7 @@
 import JXG from 'jsxgraph';
 import type {
   Geometry,
+  IntersectionMark,
   Item2D,
   Point2,
   Tangent,
@@ -15,6 +16,7 @@ import {
   type Item2DAnalysis,
   type ParametricAnalysis,
 } from './analysis';
+import { buildCurveModels, computeIntersections, type CurveModel } from './intersections';
 
 type AnyElement = any;
 type BoundingBox = [number, number, number, number];
@@ -22,6 +24,7 @@ type BoundingBox = [number, number, number, number];
 export interface BoardSnapshot {
   items2d: Item2D[];
   geometry: Geometry[];
+  intersections: IntersectionMark[];
   paramValues: Record<string, string>;
   snapToGrid: boolean;
 }
@@ -72,6 +75,21 @@ interface GeometryEntry {
   lastDriverPlaying: boolean;
 }
 
+interface IntersectionTrace {
+  curve: AnyElement | null;
+  points: Point2[];
+  last: Point2 | null;
+}
+
+interface IntersectionEntry {
+  mark: IntersectionMark;
+  points: AnyElement[];
+  labels: AnyElement[];
+  traces: Array<IntersectionTrace | null>;
+  lastTraceClearToken: number;
+  lastShowTrace: boolean;
+}
+
 const INITIAL_BBOX: BoundingBox = [-10, 10, 10, -10];
 
 function isFinitePoint(point: Point2 | null | undefined): point is Point2 {
@@ -85,10 +103,12 @@ export class Board2DController {
   private readonly initialView: BoundingBox;
   private entries = new Map<string, ExpressionEntry>();
   private geometryEntries = new Map<string, GeometryEntry>();
+  private intersectionEntries = new Map<string, IntersectionEntry>();
   private driverTargets = new Map<string, AnyElement>();
   private state: BoardSnapshot = {
     items2d: [],
     geometry: [],
+    intersections: [],
     paramValues: {},
     snapToGrid: true,
   };
@@ -96,6 +116,8 @@ export class Board2DController {
   private disposed = false;
   private viewTimer: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private wheelHandler: ((event: WheelEvent) => void) | null = null;
+  private boardContainer: HTMLElement | null = null;
   private lastBBox: BoundingBox = INITIAL_BBOX;
 
   constructor(
@@ -119,7 +141,7 @@ export class Board2DController {
         showCopyright: false,
         showInfobox: false,
         pan: { enabled: true, needTwoFingers: false },
-        zoom: { enabled: true, wheel: true },
+        zoom: { enabled: true, wheel: false },
         keepAspectRatio: true,
         axis: {
           strokeColor: '#94a3b8',
@@ -160,6 +182,23 @@ export class Board2DController {
       const container = document.getElementById(boardId);
       if (container) {
         container.style.touchAction = 'none';
+        this.boardContainer = container;
+        this.wheelHandler = (event: WheelEvent) => {
+          if (this.disposed) return;
+          const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1);
+          if (!Number.isFinite(delta) || delta === 0) return;
+          event.preventDefault();
+          const rect = container.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          const bb = this.getBoundingBox();
+          const fx = (event.clientX - rect.left) / rect.width;
+          const fy = (event.clientY - rect.top) / rect.height;
+          const anchorX = bb[0] + fx * (bb[2] - bb[0]);
+          const anchorY = bb[1] + fy * (bb[3] - bb[1]);
+          const factor = Math.min(2, Math.max(0.5, Math.exp(delta * 0.0015)));
+          this.zoomAt(factor, anchorX, anchorY);
+        };
+        container.addEventListener('wheel', this.wheelHandler, { passive: false });
         this.resizeObserver = new ResizeObserver((entries) => {
           if (this.disposed) return;
           const entry = entries[0];
@@ -266,10 +305,222 @@ export class Board2DController {
       }
     }
 
+    this.syncIntersections(snapshot);
+
     try {
       this.board.update();
     } catch {
       // JSXGraph can complain transiently while elements are being replaced.
+    }
+  }
+
+  private ensureIntersectionPoint(entry: IntersectionEntry, index: number): void {
+    while (entry.points.length <= index) {
+      const point = this.board.create('point', [0, 0], {
+        name: '',
+        withLabel: false,
+        fixed: true,
+        size: 3,
+        fillColor: entry.mark.color,
+        strokeColor: '#ffffff',
+        strokeWidth: 1.4,
+        highlight: false,
+        showInfobox: false,
+        visible: false,
+        layer: 11,
+      });
+      const label = this.board.create('text', [0, 0, ''], {
+        fontSize: 11,
+        strokeColor: entry.mark.color,
+        fixed: true,
+        highlight: false,
+        withLabel: false,
+        showInfobox: false,
+        visible: false,
+        layer: 12,
+      });
+      entry.points.push(point);
+      entry.labels.push(label);
+      entry.traces.push(null);
+    }
+  }
+
+  private ensureIntersectionTrace(entry: IntersectionEntry, index: number): IntersectionTrace {
+    const existing = entry.traces[index];
+    if (existing) return existing;
+    const trace: IntersectionTrace = { curve: null, points: [], last: null };
+    entry.traces[index] = trace;
+    return trace;
+  }
+
+  private rebuildIntersectionTrace(trace: IntersectionTrace, color: string): void {
+    if (trace.curve) {
+      try {
+        this.board.removeObject(trace.curve);
+      } catch {
+        // ignore
+      }
+    }
+    if (trace.points.length < 2) {
+      trace.curve = null;
+      return;
+    }
+    trace.curve = this.board.create(
+      'curve',
+      [trace.points.map((point) => point.x), trace.points.map((point) => point.y)],
+      {
+        strokeColor: color,
+        strokeWidth: 3,
+        strokeOpacity: 0.82,
+        highlight: false,
+        fixed: true,
+        withLabel: false,
+        layer: 20,
+      },
+    );
+  }
+
+  private clearIntersectionTrace(trace: IntersectionTrace): void {
+    if (trace.curve) {
+      try {
+        this.board.removeObject(trace.curve);
+      } catch {
+        // ignore
+      }
+    }
+    trace.curve = null;
+    trace.points = [];
+    trace.last = null;
+  }
+
+  private destroyIntersectionEntry(entry: IntersectionEntry): void {
+    for (const point of entry.points) {
+      try {
+        this.board.removeObject(point);
+      } catch {
+        // ignore
+      }
+    }
+    for (const label of entry.labels) {
+      try {
+        this.board.removeObject(label);
+      } catch {
+        // ignore
+      }
+    }
+    for (const trace of entry.traces) {
+      if (!trace) continue;
+      this.clearIntersectionTrace(trace);
+    }
+    this.intersectionEntries.delete(entry.mark.id);
+  }
+
+  private syncIntersections(snapshot: BoardSnapshot): void {
+    if (snapshot.intersections.length === 0 && this.intersectionEntries.size === 0) return;
+    const seen = new Set<string>();
+    let models: Map<string, CurveModel> | null = null;
+
+    for (const mark of snapshot.intersections) {
+      seen.add(mark.id);
+      let entry = this.intersectionEntries.get(mark.id);
+      if (!entry) {
+        entry = {
+          mark,
+          points: [],
+          labels: [],
+          traces: [],
+          lastTraceClearToken: mark.traceClearToken,
+          lastShowTrace: mark.showTrace,
+        };
+        this.intersectionEntries.set(mark.id, entry);
+      }
+      entry.mark = mark;
+
+      if (!models) {
+        models = buildCurveModels(
+          snapshot.items2d,
+          snapshot.geometry,
+          this.numericParams,
+          this.getBoundingBox(),
+        );
+      }
+      const a = models.get(mark.aId);
+      const b = models.get(mark.bId);
+      const intersections = mark.visible && a && b ? computeIntersections(a, b) : [];
+      const traceReset =
+        entry.lastTraceClearToken !== mark.traceClearToken ||
+        entry.lastShowTrace !== mark.showTrace;
+      entry.lastTraceClearToken = mark.traceClearToken;
+      entry.lastShowTrace = mark.showTrace;
+      const shouldTrace = mark.visible && mark.showTrace;
+
+      for (let index = 0; index < 8; index += 1) {
+        this.ensureIntersectionPoint(entry, index);
+        const point = entry.points[index];
+        const label = entry.labels[index];
+        const trace = entry.traces[index];
+        const hit = intersections[index];
+
+        if (hit) {
+          try {
+            point.setAttribute({
+              visible: mark.visible,
+              fillColor: mark.color,
+              strokeColor: '#ffffff',
+            });
+            point.setPosition(JXG.COORDS_BY_USER, [hit.x, hit.y]);
+            label.setAttribute({
+              visible: mark.visible && mark.showCoordinates,
+              strokeColor: mark.color,
+            });
+            label.setText(`(${formatNumber(hit.x)}, ${formatNumber(hit.y)})`);
+            label.setPosition(JXG.COORDS_BY_USER, [hit.x + 0.22, hit.y + 0.22]);
+          } catch {
+            // ignore transient point errors
+          }
+        } else {
+          try {
+            point.setAttribute({ visible: false });
+            label.setAttribute({ visible: false });
+          } catch {
+            // ignore
+          }
+        }
+
+        if (trace) {
+          try {
+            if (traceReset || !shouldTrace) {
+              this.clearIntersectionTrace(trace);
+            }
+            if (shouldTrace && hit) {
+              if (
+                !trace.last ||
+                Math.hypot(trace.last.x - hit.x, trace.last.y - hit.y) > 1e-4
+              ) {
+                trace.points.push({ x: hit.x, y: hit.y });
+                if (trace.points.length > 600) {
+                  trace.points.splice(0, trace.points.length - 600);
+                }
+                trace.last = { x: hit.x, y: hit.y };
+                this.rebuildIntersectionTrace(trace, mark.color);
+              }
+            }
+          } catch {
+            // ignore trace errors
+          }
+        } else if (shouldTrace && hit) {
+          try {
+            const created = this.ensureIntersectionTrace(entry, index);
+            created.last = { x: hit.x, y: hit.y };
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    for (const [id, entry] of this.intersectionEntries) {
+      if (!seen.has(id)) this.destroyIntersectionEntry(entry);
     }
   }
 
@@ -784,6 +1035,21 @@ export class Board2DController {
       fixed: false,
       layer: 9,
     });
+    let lastReport = 0;
+    const report = () => {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now - lastReport < 32) return;
+      lastReport = now;
+      try {
+        this.callbacks.onGeometryAnchorChange(entry.id, key, {
+          x: anchor.X(),
+          y: anchor.Y(),
+        });
+      } catch {
+        // ignore transient coordinate errors
+      }
+    };
+    anchor.on('drag', report);
     anchor.on('up', () => {
       try {
         this.callbacks.onGeometryAnchorChange(entry.id, key, {
@@ -811,6 +1077,18 @@ export class Board2DController {
       showInfobox: false,
       layer: 9,
     });
+    let lastReport = 0;
+    const report = () => {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now - lastReport < 32) return;
+      lastReport = now;
+      try {
+        this.callbacks.onDriverPointChange(entry.id, { x: glider.X(), y: glider.Y() });
+      } catch {
+        // ignore
+      }
+    };
+    glider.on('drag', report);
     glider.on('up', () => {
       try {
         this.callbacks.onDriverPointChange(entry.id, { x: glider.X(), y: glider.Y() });
@@ -1139,6 +1417,25 @@ export class Board2DController {
     }
     entry.shape = shape;
     const visible = shape.visible;
+
+    if (shape.kind === 'line' && !entry.driverGlider) {
+      const syncAnchor = (key: 'a' | 'b', point: Point2) => {
+        const anchor = entry.anchorPoints[key];
+        if (!anchor) return;
+        try {
+          if (
+            Math.abs(anchor.X() - point.x) > 1e-9 ||
+            Math.abs(anchor.Y() - point.y) > 1e-9
+          ) {
+            anchor.setPosition(JXG.COORDS_BY_USER, [point.x, point.y]);
+          }
+        } catch {
+          // ignore transient anchor errors
+        }
+      };
+      syncAnchor('a', shape.a);
+      syncAnchor('b', shape.b);
+    }
 
     for (const element of entry.main) {
       try {
@@ -1478,9 +1775,22 @@ export class Board2DController {
       const bb = this.board.getBoundingBox() as BoundingBox;
       const cx = (bb[0] + bb[2]) / 2;
       const cy = (bb[1] + bb[3]) / 2;
-      const halfW = ((bb[2] - bb[0]) / 2) * factor;
-      const halfH = ((bb[1] - bb[3]) / 2) * factor;
-      this.board.setBoundingBox([cx - halfW, cy + halfH, cx + halfW, cy - halfH], true);
+      this.zoomAt(factor, cx, cy);
+    } catch {
+      // ignore
+    }
+  }
+
+  /** Zoom keeping the given world-space point under the cursor fixed. */
+  zoomAt(factor: number, anchorX: number, anchorY: number): void {
+    try {
+      if (!Number.isFinite(factor) || factor <= 0) return;
+      const bb = this.board.getBoundingBox() as BoundingBox;
+      const x1 = anchorX + (bb[0] - anchorX) * factor;
+      const y1 = anchorY + (bb[1] - anchorY) * factor;
+      const x2 = anchorX + (bb[2] - anchorX) * factor;
+      const y2 = anchorY + (bb[3] - anchorY) * factor;
+      this.board.setBoundingBox([x1, y1, x2, y2], true);
       this.board.update();
     } catch {
       // ignore
@@ -1500,11 +1810,17 @@ export class Board2DController {
     this.disposed = true;
     if (this.viewTimer) window.clearTimeout(this.viewTimer);
     this.resizeObserver?.disconnect();
+    if (this.boardContainer && this.wheelHandler) {
+      this.boardContainer.removeEventListener('wheel', this.wheelHandler);
+      this.wheelHandler = null;
+    }
     try {
       this.entries.forEach((entry) => this.destroyEntry(entry));
       this.entries.clear();
       this.geometryEntries.forEach((entry) => this.destroyGeometryEntry(entry));
       this.geometryEntries.clear();
+      this.intersectionEntries.forEach((entry) => this.destroyIntersectionEntry(entry));
+      this.intersectionEntries.clear();
       const JXGAny = JXG as any;
       JXGAny.JSXGraph.freeBoard(this.board);
     } catch {

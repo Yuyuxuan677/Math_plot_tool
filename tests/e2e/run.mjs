@@ -303,6 +303,26 @@ async function runDesktop() {
       'division visibility state did not persist after reload',
     );
 
+    await addOption(page, '交点标记');
+    assert.equal(await page.locator('.intersection-card').count(), 1, 'intersection card missing');
+    const intersectionLabels = await page.locator('.jxgbox .JXGtext').allTextContents();
+    assert(
+      intersectionLabels.some((text) => /^\(.*,.*\)$/.test(text.trim())),
+      'intersection coordinates were not drawn',
+    );
+    await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-intersection.png` });
+
+    const tickLabelsBefore = await page.locator('.jxgbox svg text').allTextContents();
+    const boardBox = await page.locator('.jxgbox').boundingBox();
+    assert(boardBox, '2D board missing for wheel test');
+    await page.mouse.move(boardBox.x + boardBox.width * 0.7, boardBox.y + boardBox.height * 0.4);
+    await page.mouse.wheel(0, -420);
+    await page.waitForTimeout(600);
+    const tickLabelsAfter = await page.locator('.jxgbox svg text').allTextContents();
+    assert.notDeepEqual(tickLabelsAfter, tickLabelsBefore, 'mouse wheel did not zoom the board');
+    await page.getByRole('button', { name: '复位视图' }).click();
+    await page.waitForTimeout(500);
+
     await page.getByRole('tab', { name: /3D 空间/ }).click();
     await page.waitForTimeout(1800);
     await page.locator('.scene3d-canvas canvas').waitFor({ state: 'visible', timeout: 10000 });

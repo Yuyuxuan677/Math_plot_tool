@@ -23,6 +23,7 @@ export default function App() {
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
   const geometry = useAppStore((state) => state.geometry);
+  const intersections = useAppStore((state) => state.intersections);
   const paramValues = useAppStore((state) => state.paramValues);
   const view2dBoundingBox = useAppStore((state) => state.view2dBoundingBox);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
@@ -37,13 +38,23 @@ export default function App() {
         items2d,
         items3d,
         geometry,
+        intersections,
         paramValues,
         view2dBoundingBox,
         snapToGrid,
       });
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [mode, items2d, items3d, geometry, paramValues, view2dBoundingBox, snapToGrid]);
+  }, [
+    mode,
+    items2d,
+    items3d,
+    geometry,
+    intersections,
+    paramValues,
+    view2dBoundingBox,
+    snapToGrid,
+  ]);
 
   return (
     <div className={`app mode-${mode}`}>

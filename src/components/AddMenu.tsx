@@ -7,6 +7,7 @@ export function AddMenu() {
   const mode = useAppStore((state) => state.mode);
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
+  const addIntersection = useAppStore((state) => state.addIntersection);
 
   if (!open) return null;
 
@@ -16,6 +17,11 @@ export function AddMenu() {
           { label: '函数', detail: 'y = f(x)', action: () => addItem2D('explicit') },
           { label: '参数曲线', detail: '(x(t), y(t))', action: () => addItem2D('parametric') },
           { label: '隐式方程', detail: 'F(x, y) = 0', action: () => addItem2D('implicit') },
+          {
+            label: '交点标记',
+            detail: '选择两条曲线，标记其交点',
+            action: () => addIntersection(),
+          },
         ]
       : [
           { label: '曲面', detail: 'z = f(x, y)', action: () => addItem3D('surface') },

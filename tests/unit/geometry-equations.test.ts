@@ -39,6 +39,7 @@ describe('geometry equations', () => {
       movingEndpoint: 'B',
       driverCurveId: null,
       driverPoint: null,
+    angleConstraint: null,
     };
     expect(lineEquation(shape).tex).toContain('y = 2x');
     expect(lineEquation(shape).tex).toContain('+ 1');
@@ -59,6 +60,7 @@ describe('geometry equations', () => {
       movingEndpoint: 'B',
       driverCurveId: null,
       driverPoint: null,
+    angleConstraint: null,
     };
     expect(lineEquation(shape).tex).toBe('x = 2');
   });

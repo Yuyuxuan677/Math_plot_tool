@@ -17,6 +17,7 @@ export function MobileSheet() {
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
   const geometry = useAppStore((state) => state.geometry);
+  const intersections = useAppStore((state) => state.intersections);
 
   const startY = useRef<number | null>(null);
   const intent = useRef<'up' | 'down' | null>(null);
@@ -28,7 +29,8 @@ export function MobileSheet() {
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, [expanded]);
 
-  const count = mode === '2d' ? items2d.length + geometry.length : items3d.length;
+  const count =
+    mode === '2d' ? items2d.length + geometry.length + intersections.length : items3d.length;
 
   const handleFocus = (event: React.FocusEvent<HTMLDivElement>) => {
     const target = event.target;

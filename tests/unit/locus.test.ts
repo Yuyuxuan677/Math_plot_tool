@@ -35,6 +35,7 @@ function line(overrides: Partial<LineShape> = {}): LineShape {
     movingEndpoint: 'B',
     driverCurveId: 'driver',
     driverPoint: null,
+    angleConstraint: null,
     ...overrides,
   };
 }

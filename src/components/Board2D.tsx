@@ -44,6 +44,7 @@ export function Board2D() {
 
   const items2d = useAppStore((state) => state.items2d);
   const geometry = useAppStore((state) => state.geometry);
+  const intersections = useAppStore((state) => state.intersections);
   const paramValues = useAppStore((state) => state.paramValues);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
   const viewResetToken = useAppStore((state) => state.viewResetToken);
@@ -65,6 +66,7 @@ export function Board2D() {
     () => ({
       items2d: useAppStore.getState().items2d,
       geometry: useAppStore.getState().geometry,
+      intersections: useAppStore.getState().intersections,
       paramValues: useAppStore.getState().paramValues,
       snapToGrid: useAppStore.getState().snapToGrid,
     }),
@@ -145,10 +147,11 @@ export function Board2D() {
     controllerRef.current.update({
       items2d,
       geometry,
+      intersections,
       paramValues,
       snapToGrid,
     });
-  }, [items2d, geometry, paramValues, snapToGrid]);
+  }, [items2d, geometry, intersections, paramValues, snapToGrid]);
 
   useEffect(() => {
     if (viewResetToken === 0) return;

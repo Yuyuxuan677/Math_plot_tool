@@ -1,6 +1,7 @@
 import type {
   Geometry,
   HyperbolaShape,
+  IntersectionMark,
   Item2D,
   Item3D,
   Orientation,
@@ -172,6 +173,19 @@ function sanitizeGeometry(value: unknown): Geometry | null {
     if (!a || !b) return null;
     const divisionN = Math.max(2, Math.min(20, Math.round(numberValue(value.divisionN, 2))));
     const showDivisions = boolValue(value.showDivisions, false);
+    const rawConstraint = isRecord(value.angleConstraint) ? value.angleConstraint : null;
+    const angleConstraint =
+      rawConstraint &&
+      typeof rawConstraint.sourceId === 'string' &&
+      rawConstraint.sourceId !== value.id &&
+      typeof rawConstraint.angleDeg === 'number' &&
+      Number.isFinite(rawConstraint.angleDeg)
+        ? {
+            sourceId: rawConstraint.sourceId,
+            angleDeg: rawConstraint.angleDeg,
+            offset: pointValue(rawConstraint.offset) ?? { x: 0, y: 0 },
+          }
+        : null;
     return {
       ...common,
       kind: 'line',
@@ -186,6 +200,7 @@ function sanitizeGeometry(value: unknown): Geometry | null {
       movingEndpoint: value.movingEndpoint === 'A' ? 'A' : 'B',
       driverCurveId: typeof value.driverCurveId === 'string' ? value.driverCurveId : null,
       driverPoint: pointValue(value.driverPoint),
+      angleConstraint,
     };
   }
   if (value.kind === 'circle') {
@@ -227,6 +242,23 @@ function sanitizeGeometry(value: unknown): Geometry | null {
   return null;
 }
 
+function sanitizeIntersection(value: unknown): IntersectionMark | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  if (typeof value.aId !== 'string' || typeof value.bId !== 'string') return null;
+  if (!value.aId || !value.bId || value.aId === value.bId) return null;
+  const color = typeof value.color === 'string' && COLOR_RE.test(value.color) ? value.color : '#dc2626';
+  return {
+    id: value.id,
+    aId: value.aId,
+    bId: value.bId,
+    color,
+    visible: boolValue(value.visible, true),
+    showCoordinates: boolValue(value.showCoordinates, true),
+    showTrace: boolValue(value.showTrace, false),
+    traceClearToken: numberValue(value.traceClearToken, 0),
+  };
+}
+
 export function loadPersistedState(): Partial<PersistedState> | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -243,6 +275,15 @@ export function loadPersistedState(): Partial<PersistedState> | null {
       : [];
     const geometry = Array.isArray(parsed.geometry)
       ? parsed.geometry.map(sanitizeGeometry).filter((item): item is Geometry => item !== null)
+      : [];
+    const knownIds = new Set([...items2d.map((item) => item.id), ...geometry.map((item) => item.id)]);
+    const intersections = Array.isArray(parsed.intersections)
+      ? parsed.intersections
+          .map(sanitizeIntersection)
+          .filter(
+            (item): item is IntersectionMark =>
+              item !== null && knownIds.has(item.aId) && knownIds.has(item.bId),
+          )
       : [];
 
     const paramValues: Record<string, string> = {};
@@ -267,6 +308,7 @@ export function loadPersistedState(): Partial<PersistedState> | null {
       items2d,
       items3d,
       geometry,
+      intersections,
       paramValues,
       view2dBoundingBox: bbox,
       snapToGrid: boolValue(parsed.snapToGrid, true),

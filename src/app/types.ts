@@ -99,6 +99,15 @@ export type GeometryKind = 'line' | 'circle' | 'ellipse' | 'parabola' | 'hyperbo
 export type Orientation = 'horizontal' | 'vertical';
 export type EndpointName = 'A' | 'B';
 
+export interface LineAngleConstraint {
+  /** Another hand-drawn line used as the direction reference. */
+  sourceId: string;
+  /** Relative angle in degrees. 90 means perpendicular. */
+  angleDeg: number;
+  /** Target-center offset from the source center, kept while the source moves. */
+  offset: Point2;
+}
+
 export interface LineShape extends GeometryBase {
   kind: 'line';
   a: Point2;
@@ -115,6 +124,7 @@ export interface LineShape extends GeometryBase {
   driverCurveId: string | null;
   /** Approximate current glider position, used to restore a moving endpoint. */
   driverPoint: Point2 | null;
+  angleConstraint: LineAngleConstraint | null;
 }
 
 export interface CircleShape extends GeometryBase {
@@ -160,6 +170,19 @@ export type GeometryKindToShape = {
 
 export type Tool = 'select' | GeometryKind;
 
+export interface IntersectionMark {
+  id: string;
+  /** First curve/line object. */
+  aId: string;
+  /** Second curve/line object. */
+  bId: string;
+  color: string;
+  visible: boolean;
+  showCoordinates: boolean;
+  showTrace: boolean;
+  traceClearToken: number;
+}
+
 export interface View2D {
   boundingBox: [number, number, number, number] | null;
 }
@@ -170,6 +193,7 @@ export interface PersistedState {
   items2d: Item2D[];
   items3d: Item3D[];
   geometry: Geometry[];
+  intersections: IntersectionMark[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;

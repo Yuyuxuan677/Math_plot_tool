@@ -1,6 +1,6 @@
 import { useAppStore } from '../app/store';
 import type { Geometry, LineShape, Orientation } from '../app/types';
-import { buildCurveRefs } from '../app/curveRefs';
+import { buildCurveRefs, geometryLabel } from '../app/curveRefs';
 import { geometryEquation, geometryTitle } from '../core/geometry/equations';
 import {
   IconChevronDown,
@@ -218,7 +218,41 @@ function LineControls({
   curveRefs: ReturnType<typeof buildCurveRefs>;
 }) {
   const updateGeometry = useAppStore((state) => state.updateGeometry);
+  const allGeometry = useAppStore((state) => state.geometry);
   const selectedRef = curveRefs.find((ref) => ref.id === shape.driverCurveId);
+  const lineRefs = allGeometry.filter(
+    (item): item is LineShape => item.kind === 'line' && item.id !== shape.id,
+  );
+  const constraint = shape.angleConstraint;
+  const constraintSource = constraint
+    ? lineRefs.find((item) => item.id === constraint.sourceId)
+    : undefined;
+  const targetCenter = {
+    x: (shape.a.x + shape.b.x) / 2,
+    y: (shape.a.y + shape.b.y) / 2,
+  };
+  const setConstraintSource = (sourceId: string) => {
+    if (!sourceId) {
+      updateGeometry(shape.id, { angleConstraint: null });
+      return;
+    }
+    const source = lineRefs.find((item) => item.id === sourceId);
+    if (!source) return;
+    const sourceCenter = {
+      x: (source.a.x + source.b.x) / 2,
+      y: (source.a.y + source.b.y) / 2,
+    };
+    updateGeometry(shape.id, {
+      angleConstraint: {
+        sourceId,
+        angleDeg: constraint?.angleDeg ?? 90,
+        offset: {
+          x: targetCenter.x - sourceCenter.x,
+          y: targetCenter.y - sourceCenter.y,
+        },
+      },
+    });
+  };
 
   return (
     <>
@@ -232,6 +266,52 @@ function LineControls({
           onChange={(checked) => updateGeometry(shape.id, { extended: checked })}
           label="延长为直线"
         />
+      </div>
+
+      <div className="setting-row column-setting">
+        <div>
+          <span className="setting-title">角度约束</span>
+          <p className="setting-hint">
+            以另一条手绘直线为方向源；移动源线时本线跟随平移和旋转，90° 即垂直
+          </p>
+        </div>
+        <select
+          className="select-field"
+          value={constraint?.sourceId ?? ''}
+          aria-label="选择角度约束的源直线"
+          onChange={(event) => setConstraintSource(event.target.value)}
+        >
+          <option value="">不约束</option>
+          {lineRefs.map((item) => (
+            <option key={item.id} value={item.id}>
+              {geometryLabel(item)}
+            </option>
+          ))}
+          {constraint && !constraintSource && (
+            <option value={constraint.sourceId} disabled>
+              源直线已删除
+            </option>
+          )}
+        </select>
+        {constraint && (
+          <div className="inline-number">
+            <NumberField
+              value={constraint.angleDeg}
+              onCommit={(value) => {
+                const angleDeg = Math.max(-360, Math.min(360, Number(value.toFixed(1))));
+                updateGeometry(shape.id, {
+                  angleConstraint: { ...constraint, angleDeg },
+                });
+              }}
+              ariaLabel="相对源直线的夹角（度）"
+              step={5}
+            />
+            <span className="inline-number-suffix">°</span>
+          </div>
+        )}
+        {lineRefs.length === 0 && (
+          <p className="hint-text">再画一条手绘直线后，才能设置角度约束。</p>
+        )}
       </div>
 
       <div className="setting-row">
