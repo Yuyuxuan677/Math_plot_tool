@@ -57,6 +57,8 @@ interface TangentElements {
   glider: AnyElement;
   line: AnyElement;
   pointBeforeDrag: Point2 | null;
+  /** Hidden second point used to render an exact tangent for implicit curves. */
+  helper?: AnyElement;
 }
 
 interface ExpressionEntry {
@@ -759,6 +761,7 @@ export class Board2DController {
       if (Math.hypot(point.x - current.x, point.y - current.y) > 1e-4) {
         try {
           moving.tangent.glider.setPosition(JXG.COORDS_BY_USER, [point.x, point.y]);
+          this.updateImplicitTangentLine(moving.entry, moving.tangent);
           this.board.update();
           this.callbacks.onTangentPointChange(movingRef.ownerId, movingRef.tangentId, point);
           this.callbacks.onTangentMeta(
@@ -1613,6 +1616,39 @@ export class Board2DController {
     return { slope, equation };
   }
 
+  private implicitTangentSlope(entry: ExpressionEntry, x: number, y: number): number | null {
+    if (entry.item.kind !== 'implicit') return null;
+    const analysis = entry.analysis as ImplicitAnalysis;
+    if (!analysis.expr.ok) return null;
+    const h = 1e-4 * Math.max(1, Math.abs(x), Math.abs(y));
+    const fx = analysis.expr.evaluate(this.scope({ x: x + h, y })) -
+      analysis.expr.evaluate(this.scope({ x: x - h, y }));
+    const fy = analysis.expr.evaluate(this.scope({ x, y: y + h })) -
+      analysis.expr.evaluate(this.scope({ x, y: y - h }));
+    if (!Number.isFinite(fx) || !Number.isFinite(fy)) return null;
+    if (Math.abs(fy) < 1e-9) return Infinity;
+    return -fx / fy;
+  }
+
+  private updateImplicitTangentLine(entry: ExpressionEntry, elements: TangentElements): void {
+    if (entry.item.kind !== 'implicit' || !elements.helper) return;
+    try {
+      const x = elements.glider.X();
+      const y = elements.glider.Y();
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      const slope = this.implicitTangentSlope(entry, x, y);
+      if (slope === null) return;
+      const helper = elements.helper;
+      if (!Number.isFinite(slope)) {
+        helper.setPosition(JXG.COORDS_BY_USER, [x, y + 1]);
+      } else {
+        helper.setPosition(JXG.COORDS_BY_USER, [x + 1, y + slope]);
+      }
+    } catch {
+      // ignore transient tangent line errors
+    }
+  }
+
   private syncTangents(entry: ExpressionEntry, visible: boolean): void {
     if (!entry.curve) {
       for (const [id, elements] of entry.tangents) {
@@ -1633,6 +1669,7 @@ export class Board2DController {
       if (existing) {
         existing.glider.setAttribute({ visible });
         existing.line.setAttribute({ visible });
+        this.updateImplicitTangentLine(entry, existing);
         continue;
       }
       const occupied = [...entry.tangents.values()].map((elements) => ({
@@ -1659,19 +1696,47 @@ export class Board2DController {
             highlightStrokeColor: '#92400e',
           },
         );
-        const line = this.board.create('tangent', [glider], {
-          visible,
-          strokeColor: '#d97706',
-          strokeWidth: 1.7,
-          dash: 2,
-          strokeOpacity: 0.85,
-          fixed: true,
-          highlight: false,
-          withLabel: false,
-          layer: 7,
-        });
-        const elements: TangentElements = { glider, line, pointBeforeDrag: null };
+        const isImplicit = entry.item.kind === 'implicit';
+        const helper = isImplicit
+          ? this.board.create('point', [point.x + 1, point.y], {
+              visible: false,
+              fixed: true,
+              withLabel: false,
+              showInfobox: false,
+              layer: 6,
+            })
+          : null;
+        const line = helper
+          ? this.board.create('line', [glider, helper], {
+              visible,
+              strokeColor: '#d97706',
+              strokeWidth: 1.7,
+              dash: 2,
+              strokeOpacity: 0.85,
+              fixed: true,
+              highlight: false,
+              withLabel: false,
+              layer: 7,
+            })
+          : this.board.create('tangent', [glider], {
+              visible,
+              strokeColor: '#d97706',
+              strokeWidth: 1.7,
+              dash: 2,
+              strokeOpacity: 0.85,
+              fixed: true,
+              highlight: false,
+              withLabel: false,
+              layer: 7,
+            });
+        const elements: TangentElements = {
+          glider,
+          line,
+          pointBeforeDrag: null,
+          helper: helper ?? undefined,
+        };
         entry.tangents.set(tangent.id, elements);
+        this.updateImplicitTangentLine(entry, elements);
         const pushPoint = () => {
           const current = entry.tangents.get(tangent.id);
           if (!current) return;
@@ -1687,6 +1752,7 @@ export class Board2DController {
         glider.on('drag', () => {
           const current = entry.tangents.get(tangent.id);
           if (!current) return;
+          this.updateImplicitTangentLine(entry, current);
           const px = current.glider.X();
           const py = current.glider.Y();
           if (Number.isFinite(px) && Number.isFinite(py)) {
@@ -1711,6 +1777,13 @@ export class Board2DController {
       this.board.removeObject(elements.line);
     } catch {
       // ignore
+    }
+    if (elements.helper) {
+      try {
+        this.board.removeObject(elements.helper);
+      } catch {
+        // ignore
+      }
     }
     try {
       this.board.removeObject(elements.glider);

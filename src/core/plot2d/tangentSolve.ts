@@ -112,7 +112,37 @@ export function findLocalImplicitTangentPoint(
     }
   }
   if (!best || best.error > 0.05) return null;
-  return best.point;
+  // Refine the crossing with progressively smaller steps. The coarse march
+  // finds the correct parallel tangent, but its discrete step can leave a
+  // visible angle error; this keeps the actual angle accurate.
+  let refined = best.point;
+  let refineStep = step;
+  for (let iteration = 0; iteration < 6; iteration += 1) {
+    const tangent = tangentAt(refined);
+    if (!tangent) break;
+    let candidateBest: { point: Point2; error: number } = {
+      point: refined,
+      error: angleError(tangent.angle, desiredAngle),
+    };
+    for (let offset = -3; offset <= 3; offset += 1) {
+      if (offset === 0) continue;
+      const candidate = project({
+        x: refined.x + tangent.tx * refineStep * offset,
+        y: refined.y + tangent.ty * refineStep * offset,
+      });
+      if (!candidate) continue;
+      const candidateTangent = tangentAt(candidate);
+      if (!candidateTangent) continue;
+      const candidateError = angleError(candidateTangent.angle, desiredAngle);
+      if (candidateError < candidateBest.error) {
+        candidateBest = { point: candidate, error: candidateError };
+      }
+    }
+    refined = candidateBest.point;
+    if (candidateBest.error <= 0.0005) break;
+    refineStep /= 3;
+  }
+  return refined;
 }
 
 function absoluteAngleDifference(a: number, b: number): number {

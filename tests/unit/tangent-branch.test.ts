@@ -14,6 +14,13 @@ describe('local implicit tangent branch', () => {
     expect(point).not.toBeNull();
     expect(point!.x).toBeLessThan(0);
     expect(Math.hypot(point!.x + 1.913, point!.y - 0.291)).toBeLessThan(0.6);
+    const h = 1e-5;
+    const fx = (ellipse(point!.x + h, point!.y) - ellipse(point!.x - h, point!.y)) / (2 * h);
+    const fy = (ellipse(point!.x, point!.y + h) - ellipse(point!.x, point!.y - h)) / (2 * h);
+    const tangentAngle = Math.atan2(fx, -fy);
+    let difference = ((tangentAngle - 1.072) % Math.PI + Math.PI) % Math.PI;
+    if (difference > Math.PI / 2) difference = Math.PI - difference;
+    expect(Math.abs(difference)).toBeLessThan(0.002);
   });
 
   it('moves continuously when the desired angle changes slightly', () => {
