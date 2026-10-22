@@ -271,17 +271,23 @@ async function runDesktop() {
     );
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-tangent-trace.png` });
 
-    const markedPointBeforeAuto = await page.locator('.marked-point-card').first().innerText();
+    const autoCard = page.locator('.marked-point-card').first();
+    if ((await autoCard.locator('.card-body').count()) === 0) {
+      await autoCard.locator('.card-title-button').click();
+      await page.waitForTimeout(250);
+    }
+    await autoCard.getByRole('switch', { name: '自动移动 A' }).click();
+    const markedPointBeforeAuto = await autoCard.innerText();
     await page
       .locator('.objects-panel-head .secondary-small-button')
       .filter({ hasText: '自动移动' })
       .click();
     await page.waitForTimeout(1100);
-    const markedPointAfterAuto = await page.locator('.marked-point-card').first().innerText();
+    const markedPointAfterAuto = await autoCard.innerText();
     assert.notEqual(
       markedPointAfterAuto,
       markedPointBeforeAuto,
-      'marked points did not move automatically',
+      'selected marked point did not move automatically',
     );
     await page
       .locator('.objects-panel-head .secondary-small-button')
@@ -445,6 +451,50 @@ async function runMobile() {
   }
 }
 
+async function runPointTools() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await context.newPage();
+  attachWatch(page, 'point-tools');
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: /y = x²/ }).click();
+    await page.waitForTimeout(400);
+
+    await page.locator('.objects-panel-head .secondary-small-button').filter({ hasText: '标点' }).click();
+    let screen = await screenFor(page, 3, 3);
+    await page.mouse.click(screen.left, screen.top);
+    await page.waitForTimeout(400);
+    assert((await page.locator('.point-confirm-card').innerText()).includes('曲线外点'));
+    await page.locator('.point-confirm-card').getByRole('button', { name: '标记' }).click();
+    await page.waitForTimeout(600);
+    assert((await page.locator('.marked-point-card').first().innerText()).includes('自由点 A'));
+
+    await page.locator('.objects-panel-head .secondary-small-button').filter({ hasText: '标点' }).click();
+    screen = await screenFor(page, 1, 1);
+    await page.mouse.click(screen.left, screen.top);
+    await page.waitForTimeout(400);
+    await page.locator('.point-confirm-card').getByRole('button', { name: '标记' }).click();
+    await page.waitForTimeout(600);
+    const curveCard = page.locator('.marked-point-card').nth(1);
+    if ((await curveCard.locator('.card-body').count()) === 0) {
+      await curveCard.locator('.card-title-button').click();
+      await page.waitForTimeout(250);
+    }
+    await curveCard.locator('select[aria-label="选择坐标限制"]').selectOption('x');
+    await page.waitForTimeout(300);
+    const lockField = curveCard.locator('.inline-number .number-field');
+    await lockField.fill('1.5');
+    await lockField.blur();
+    await page.waitForTimeout(700);
+    assert((await curveCard.innerText()).includes('（1.5, 2.25）'));
+  } catch (error) {
+    recordError(error);
+  } finally {
+    await context.close();
+  }
+}
+
 async function runResilience() {
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
   const page = await context.newPage();
@@ -504,6 +554,7 @@ const browser = await chromium.launch({
 try {
   await runDesktop();
   await runMobile();
+  await runPointTools();
   await runResilience();
 } finally {
   await browser.close();

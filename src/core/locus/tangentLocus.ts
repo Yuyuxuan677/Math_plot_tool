@@ -50,7 +50,7 @@ function formatCircle(center: Point2, radiusSquared: number): string {
   return `(x - ${cx})^2 + (y - ${cy})^2 = ${num(radiusSquared)} \\quad\\left(R = ${num(radius)}\\right)`;
 }
 
-interface ConicInfo {
+export interface ConicInfo {
   kind: 'circle' | 'ellipse' | 'hyperbola' | 'parabola';
   center: Point2;
   a2?: number;
@@ -60,7 +60,7 @@ interface ConicInfo {
   equation: string;
 }
 
-function recognizeConic(
+export function recognizeConic(
   item: Item2D,
   params: Record<string, number>,
 ): ConicInfo | null {

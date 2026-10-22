@@ -1,4 +1,5 @@
 import type { Item2D, Point2 } from '../../app/types';
+import { recognizeConic, type ConicInfo } from '../locus/tangentLocus';
 import { analyze2DItem } from './analysis';
 import type {
   ExplicitAnalysis,
@@ -34,6 +35,64 @@ interface AngleCandidate {
 }
 
 const implicitCandidateCache = new Map<string, AngleCandidate[]>();
+const conicCache = new Map<string, ConicInfo | null>();
+
+function conicFor(item: Item2D, params: Record<string, number>): ConicInfo | null {
+  if (item.kind !== 'implicit') return null;
+  const key = [
+    item.id,
+    item.expr,
+    Object.keys(params)
+      .sort()
+      .map((name) => `${name}:${params[name]}`)
+      .join(','),
+  ].join('|');
+  if (conicCache.has(key)) return conicCache.get(key) ?? null;
+  const conic = recognizeConic(item, params);
+  conicCache.set(key, conic);
+  if (conicCache.size > 32) {
+    const first = conicCache.keys().next().value;
+    if (first) conicCache.delete(first);
+  }
+  return conic;
+}
+
+function exactConicTangentPoint(
+  conic: ConicInfo,
+  desiredAngle: number,
+  currentPoint: Point2 | null,
+): Point2 | null {
+  if (!['circle', 'ellipse', 'hyperbola'].includes(conic.kind)) return null;
+  const nx = -Math.sin(desiredAngle);
+  const ny = Math.cos(desiredAngle);
+  const a2 = conic.a2;
+  const b2 = conic.b2;
+  if (!a2 || !b2) return null;
+  let candidates: Point2[];
+  if (conic.kind === 'hyperbola') {
+    const denominator = a2 * nx * nx - b2 * ny * ny;
+    if (denominator <= 1e-12) return null;
+    const scale = 1 / Math.sqrt(denominator);
+    candidates = [
+      { x: conic.center.x + a2 * nx * scale, y: conic.center.y - b2 * ny * scale },
+      { x: conic.center.x - a2 * nx * scale, y: conic.center.y + b2 * ny * scale },
+    ];
+  } else {
+    const denominator = a2 * nx * nx + b2 * ny * ny;
+    if (denominator <= 1e-12) return null;
+    const scale = 1 / Math.sqrt(denominator);
+    candidates = [
+      { x: conic.center.x + a2 * nx * scale, y: conic.center.y + b2 * ny * scale },
+      { x: conic.center.x - a2 * nx * scale, y: conic.center.y - b2 * ny * scale },
+    ];
+  }
+  if (!currentPoint) return candidates[0];
+  return candidates.reduce((best, point) => {
+    const bestDistance = Math.hypot(best.x - currentPoint.x, best.y - currentPoint.y);
+    const distance = Math.hypot(point.x - currentPoint.x, point.y - currentPoint.y);
+    return distance < bestDistance ? point : best;
+  });
+}
 
 /**
  * Follow the current connected branch of an implicit curve instead of searching
@@ -213,6 +272,11 @@ export function findTangentPointForAngle(target: TangentAngleTarget): Point2 | n
     const expression = (analysis as ImplicitAnalysis).expr;
     if (!expression.ok) return null;
     const evaluate = (x: number, y: number) => expression.evaluate(scopeFor(params, { x, y }));
+    const conic = conicFor(target.item, params);
+    if (conic) {
+      const exact = exactConicTangentPoint(conic, target.desiredAngle, target.currentPoint);
+      if (exact) return exact;
+    }
     if (target.currentPoint) {
       const local = findLocalImplicitTangentPoint(
         evaluate,

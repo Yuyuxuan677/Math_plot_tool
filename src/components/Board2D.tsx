@@ -14,6 +14,7 @@ interface MarkCandidate {
   ownerId: string;
   point: Point2;
   screen: { left: number; top: number };
+  offCurve?: boolean;
 }
 
 function toolLabel(tool: Tool): string {
@@ -75,6 +76,7 @@ export function Board2D() {
   const updateTangentMeta = useAppStore((state) => state.updateTangentMeta);
   const updateMarkedPoint = useAppStore((state) => state.updateMarkedPoint);
   const addMarkedPoint = useAppStore((state) => state.addMarkedPoint);
+  const addFreeMarkedPoint = useAppStore((state) => state.addFreeMarkedPoint);
   const showToast = useAppStore((state) => state.showToast);
   const addLine = useAppStore((state) => state.addLine);
   const addCircle = useAppStore((state) => state.addCircle);
@@ -255,14 +257,11 @@ export function Board2D() {
       const hit = toWorld(event, false);
       if (!hit) return;
       const curvePoint = controller.findCurvePointAt(hit.world.x, hit.world.y);
-      if (!curvePoint) {
-        showToast('请点击曲线附近的位置', 'info');
-        return;
-      }
       setMarkCandidate({
-        ownerId: curvePoint.ownerId,
-        point: curvePoint.point,
+        ownerId: curvePoint?.ownerId ?? '',
+        point: curvePoint?.point ?? hit.world,
         screen: hit.screen,
+        offCurve: !curvePoint,
       });
       return;
     }
@@ -402,14 +401,17 @@ export function Board2D() {
               onPointerDown={(event) => event.stopPropagation()}
             >
               <span className="point-confirm-title">
-                标记为 {nextMarkedPointName(markedPoints)}？
+                标记为 {nextMarkedPointName(markedPoints)}
+                {markCandidate.offCurve ? '（曲线外点）' : ''}？
               </span>
               <div className="point-confirm-actions">
                 <button
                   type="button"
                   className="primary-small-button"
                   onClick={() => {
-                    const marked = addMarkedPoint(markCandidate.ownerId, markCandidate.point);
+                    const marked = markCandidate.offCurve
+                      ? addFreeMarkedPoint(markCandidate.point)
+                      : addMarkedPoint(markCandidate.ownerId, markCandidate.point);
                     setMarkCandidate(null);
                     setActiveTool('select');
                     if (marked) showToast(`已标记点 ${marked.name}`);

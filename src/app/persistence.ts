@@ -327,11 +327,15 @@ function sanitizeTangentConstraint(value: unknown): TangentAngleConstraint | nul
 
 function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
   if (!isRecord(value) || typeof value.id !== 'string') return null;
-  if (typeof value.ownerId !== 'string' || typeof value.name !== 'string') return null;
+  if (typeof value.name !== 'string') return null;
   const point = pointValue(value.point);
   if (!point) return null;
   const name = /^[A-Za-z]\d*$/.test(value.name) ? value.name : 'A';
-  const source = value.source === 'tangent' ? 'tangent' : 'manual';
+  const source =
+    value.source === 'tangent' ? 'tangent' : value.source === 'free' ? 'free' : 'manual';
+  const ownerId =
+    source === 'free' ? '' : typeof value.ownerId === 'string' ? value.ownerId : '';
+  if (source !== 'free' && !ownerId) return null;
   const tangentOwnerId =
     source === 'tangent' && typeof value.tangentOwnerId === 'string'
       ? value.tangentOwnerId
@@ -343,13 +347,24 @@ function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
   if (source === 'tangent' && (!tangentOwnerId || !tangentId)) return null;
   return {
     id: value.id,
-    ownerId: value.ownerId,
+    ownerId,
     source,
     tangentOwnerId,
     tangentId,
     name,
     point,
     visible: boolValue(value.visible, true),
+    autoMove: boolValue(value.autoMove, false),
+    coordinateLock:
+      isRecord(value.coordinateLock) &&
+      (value.coordinateLock.axis === 'x' || value.coordinateLock.axis === 'y') &&
+      typeof value.coordinateLock.value === 'number' &&
+      Number.isFinite(value.coordinateLock.value)
+        ? {
+            axis: value.coordinateLock.axis,
+            value: value.coordinateLock.value,
+          }
+        : undefined,
   };
 }
 
@@ -421,7 +436,7 @@ export function loadPersistedState(): Partial<PersistedState> | null {
           .filter(
             (item): item is MarkedPoint =>
               item !== null &&
-              knownItemIds.has(item.ownerId) &&
+              (item.source === 'free' || knownItemIds.has(item.ownerId)) &&
               (item.source !== 'tangent' ||
                 knownTangentKeys.has(`${item.tangentOwnerId}:${item.tangentId}`)),
           )

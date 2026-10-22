@@ -122,7 +122,7 @@ interface TangentIntersectionEntry {
 interface MarkedPointEntry {
   marked: MarkedPoint;
   glider: AnyElement;
-  curve: AnyElement;
+  curve: AnyElement | null;
   owned: boolean;
   label: AnyElement | null;
   direction: 1 | -1;
@@ -132,6 +132,8 @@ interface MarkedPointEntry {
   lastX: number;
   lastY: number;
   lastLabelReport: number;
+  lockSignature?: string;
+  lockPoint?: Point2 | null;
 }
 
 interface DivisionEntry {
@@ -1021,9 +1023,6 @@ export class Board2DController {
         this.clearIntersectionTrace(trace);
       }
       if (hit && mark.visible && mark.showTrace) {
-        if (trace.last && this.traceJumpTooLarge(trace.last, hit)) {
-          this.clearIntersectionTrace(trace);
-        }
         if (!trace.last || Math.hypot(trace.last.x - hit.x, trace.last.y - hit.y) > 1e-4) {
           trace.points.push({ x: hit.x, y: hit.y });
           if (trace.points.length > 600) trace.points.splice(0, trace.points.length - 600);
@@ -1036,6 +1035,103 @@ export class Board2DController {
       if (!seen.has(id)) this.destroyTangentIntersectionEntry(entry);
     }
     this.requestTraceRedraw();
+  }
+
+  private solveCoordinateLock(
+    entry: ExpressionEntry,
+    current: Point2,
+    lock: { axis: 'x' | 'y'; value: number },
+  ): Point2 | null {
+    const item = entry.item;
+    const bb = this.getBoundingBox();
+    const xMin = Math.min(bb[0], bb[2]);
+    const xMax = Math.max(bb[0], bb[2]);
+    const yMin = Math.min(bb[1], bb[3]);
+    const yMax = Math.max(bb[1], bb[3]);
+    const target = lock.value;
+    const residual = (point: Point2) => Math.abs((lock.axis === 'x' ? point.x : point.y) - target);
+    const choose = (candidates: Point2[]): Point2 | null => {
+      if (candidates.length === 0) return null;
+      return candidates.reduce((best, point) => {
+        const bestDistance =
+          residual(best) * 1000 +
+          Math.hypot(best.x - current.x, best.y - current.y);
+        const distance =
+          residual(point) * 1000 + Math.hypot(point.x - current.x, point.y - current.y);
+        return distance < bestDistance ? point : best;
+      });
+    };
+
+    if (item.kind === 'explicit') {
+      const analysis = entry.analysis as ExplicitAnalysis;
+      if (!analysis.expr.ok) return null;
+      if (lock.axis === 'x') {
+        const y = analysis.expr.evaluate(this.scope({ x: target }));
+        return Number.isFinite(y) ? { x: target, y } : null;
+      }
+      const samples = 1200;
+      const candidates: Point2[] = [];
+      for (let index = 0; index <= samples; index += 1) {
+        const x = xMin + ((xMax - xMin) * index) / samples;
+        const y = analysis.expr.evaluate(this.scope({ x }));
+        if (Number.isFinite(y)) candidates.push({ x, y });
+      }
+      return choose(candidates);
+    }
+
+    if (item.kind === 'parametric') {
+      const analysis = entry.analysis as ParametricAnalysis;
+      if (!analysis.x.ok || !analysis.y.ok) return null;
+      const samples = 1200;
+      const candidates: Point2[] = [];
+      for (let index = 0; index <= samples; index += 1) {
+        const t = item.tMin + ((item.tMax - item.tMin) * index) / samples;
+        const scope = this.scope({ t });
+        const x = analysis.x.evaluate(scope);
+        const y = analysis.y.evaluate(scope);
+        if (Number.isFinite(x) && Number.isFinite(y)) candidates.push({ x, y });
+      }
+      return choose(candidates);
+    }
+
+    const analysis = entry.analysis as ImplicitAnalysis;
+    if (!analysis.expr.ok) return null;
+    const evaluate = (x: number, y: number) =>
+      analysis.expr.ok ? analysis.expr.evaluate(this.scope({ x, y })) : NaN;
+    const grid = 180;
+    const candidates: Point2[] = [];
+    for (let iy = 0; iy < grid; iy += 1) {
+      const y0 = yMin + ((yMax - yMin) * iy) / grid;
+      const y1 = yMin + ((yMax - yMin) * (iy + 1)) / grid;
+      for (let ix = 0; ix < grid; ix += 1) {
+        const x0 = xMin + ((xMax - xMin) * ix) / grid;
+        const x1 = xMin + ((xMax - xMin) * (ix + 1)) / grid;
+        const corners = [
+          { x: x0, y: y0, value: evaluate(x0, y0) },
+          { x: x1, y: y0, value: evaluate(x1, y0) },
+          { x: x1, y: y1, value: evaluate(x1, y1) },
+          { x: x0, y: y1, value: evaluate(x0, y1) },
+        ];
+        for (let edge = 0; edge < 4; edge += 1) {
+          const a = corners[edge];
+          const b = corners[(edge + 1) % 4];
+          if (!Number.isFinite(a.value) || !Number.isFinite(b.value)) continue;
+          if (a.value === 0 || b.value === 0 || a.value * b.value < 0) {
+            const ratio =
+              Math.abs(a.value) + Math.abs(b.value) < 1e-12
+                ? 0.5
+                : Math.abs(a.value) / (Math.abs(a.value) + Math.abs(b.value));
+            const point = {
+              x: a.x + (b.x - a.x) * ratio,
+              y: a.y + (b.y - a.y) * ratio,
+            };
+            const projected = this.projectImplicit(evaluate, point);
+            if (projected && this.insideView(projected)) candidates.push(projected);
+          }
+        }
+      }
+    }
+    return choose(candidates);
   }
 
   public findCurvePointAt(
@@ -1132,7 +1228,7 @@ export class Board2DController {
     curve: AnyElement,
   ): MarkedPointEntry | null {
     const existing = this.markedPointEntries.get(marked.id);
-    if (existing && existing.curve === curve && existing.owned) return existing;
+    if (existing && existing.owned && existing.curve === curve) return existing;
     if (existing) this.destroyMarkedPointEntry(existing);
     try {
       const glider = this.board.create('glider', [marked.point.x, marked.point.y, curve], {
@@ -1189,6 +1285,59 @@ export class Board2DController {
     }
   }
 
+  private ensureFreeMarkedPointEntry(marked: MarkedPoint): MarkedPointEntry | null {
+    const existing = this.markedPointEntries.get(marked.id);
+    if (existing && existing.owned && existing.curve === null) return existing;
+    if (existing) this.destroyMarkedPointEntry(existing);
+    try {
+      const point = this.board.create('point', [marked.point.x, marked.point.y], {
+        name: marked.name,
+        withLabel: true,
+        size: 5,
+        fillColor: '#0f766e',
+        strokeColor: '#ffffff',
+        strokeWidth: 2,
+        highlight: false,
+        showInfobox: false,
+        layer: 9,
+        label: {
+          offset: [8, -8],
+          fontSize: 12,
+          strokeColor: '#0f766e',
+        },
+      });
+      const entry: MarkedPointEntry = {
+        marked,
+        glider: point,
+        curve: null,
+        owned: true,
+        label: null,
+        direction: 1,
+        lastVisible: false,
+        lastName: '',
+        lastX: NaN,
+        lastY: NaN,
+        lastLabelReport: 0,
+      };
+      point.on('down', () => {
+        this.draggingPointIds.add(marked.id);
+      });
+      point.on('drag', () => {
+        this.draggingPointIds.add(marked.id);
+        this.callbacks.onMarkedPointChange(marked.id, { x: point.X(), y: point.Y() });
+      });
+      point.on('up', () => {
+        this.draggingPointIds.delete(marked.id);
+        this.callbacks.onMarkedPointChange(marked.id, { x: point.X(), y: point.Y() });
+      });
+      this.markedPointEntries.set(marked.id, entry);
+      return entry;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  }
+
   private ensureTangentMarkedPointEntry(
     marked: MarkedPoint,
     tangent: TangentElements,
@@ -1235,6 +1384,33 @@ export class Board2DController {
     const seen = new Set<string>();
     for (const marked of snapshot.markedPoints) {
       seen.add(marked.id);
+      if (marked.source === 'free') {
+        const entry = this.ensureFreeMarkedPointEntry(marked);
+        if (!entry) continue;
+        entry.marked = marked;
+        try {
+          if (entry.lastVisible !== marked.visible || entry.lastName !== marked.name) {
+            entry.glider.setAttribute({
+              visible: marked.visible,
+              fillColor: '#0f766e',
+              name: marked.name,
+            });
+            entry.glider.label?.setText?.(marked.name);
+            entry.lastVisible = marked.visible;
+            entry.lastName = marked.name;
+          }
+          if (
+            !this.draggingPointIds.has(marked.id) &&
+            (Math.abs(entry.glider.X() - marked.point.x) > 1e-4 ||
+              Math.abs(entry.glider.Y() - marked.point.y) > 1e-4)
+          ) {
+            entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+          }
+        } catch {
+          // ignore
+        }
+        continue;
+      }
       const expression = this.entries.get(marked.ownerId);
       if (!expression?.curve) {
         const existing = this.markedPointEntries.get(marked.id);
@@ -1288,6 +1464,25 @@ export class Board2DController {
       if (!entry) continue;
       entry.marked = marked;
       const visible = marked.visible && expression.item.visible;
+      let pointToUse = marked.point;
+      if (marked.source === 'manual' && marked.coordinateLock) {
+        const lock = marked.coordinateLock;
+        const expressionKey =
+          expression.item.kind === 'parametric'
+            ? `${expression.item.xExpr}|${expression.item.yExpr}|${expression.item.tMin}|${expression.item.tMax}`
+            : expression.item.expr;
+        const signature = `${marked.ownerId}|${expression.item.kind}|${expressionKey}|${JSON.stringify(
+          this.numericParams,
+        )}|${lock.axis}:${lock.value}`;
+        if (entry.lockSignature !== signature) {
+          entry.lockPoint = this.solveCoordinateLock(expression, marked.point, lock);
+          entry.lockSignature = signature;
+        }
+        pointToUse = entry.lockPoint ?? marked.point;
+      } else {
+        entry.lockSignature = undefined;
+        entry.lockPoint = undefined;
+      }
       try {
         if (entry.lastVisible !== visible || entry.lastName !== marked.name) {
           entry.glider.setAttribute({
@@ -1301,10 +1496,17 @@ export class Board2DController {
         }
         if (
           !this.draggingPointIds.has(marked.id) &&
-          (Math.abs(entry.glider.X() - marked.point.x) > 1e-4 ||
-            Math.abs(entry.glider.Y() - marked.point.y) > 1e-4)
+          (Math.abs(entry.glider.X() - pointToUse.x) > 1e-4 ||
+            Math.abs(entry.glider.Y() - pointToUse.y) > 1e-4)
         ) {
-          entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+          entry.glider.setPosition(JXG.COORDS_BY_USER, [pointToUse.x, pointToUse.y]);
+        }
+        if (
+          pointToUse !== marked.point &&
+          (Math.abs(pointToUse.x - marked.point.x) > 1e-4 ||
+            Math.abs(pointToUse.y - marked.point.y) > 1e-4)
+        ) {
+          this.callbacks.onMarkedPointChange(marked.id, pointToUse);
         }
       } catch {
         // transient glider state
@@ -1545,7 +1747,15 @@ export class Board2DController {
     const step = 0.055;
     for (const entry of this.markedPointEntries.values()) {
       const marked = entry.marked;
-      if (!marked.visible || this.draggingPointIds.has(marked.id)) continue;
+      if (
+        !marked.visible ||
+        marked.source === 'free' ||
+        marked.coordinateLock ||
+        !marked.autoMove ||
+        this.draggingPointIds.has(marked.id)
+      ) {
+        continue;
+      }
       const owner = this.entries.get(marked.ownerId);
       if (!owner?.item.visible) continue;
       if (

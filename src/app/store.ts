@@ -113,6 +113,7 @@ export interface AppState {
   removeTangentAngleConstraint: (id: string) => void;
 
   addMarkedPoint: (ownerId: string, point: Point2) => MarkedPoint | null;
+  addFreeMarkedPoint: (point: Point2) => MarkedPoint;
   updateMarkedPoint: (id: string, patch: Partial<MarkedPoint>) => void;
   removeMarkedPoint: (id: string) => void;
   addDivisionMark: () => string | null;
@@ -380,7 +381,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   setHelpOpen: (helpOpen) => set({ helpOpen }),
   setLocusOwnerId: (locusOwnerId) => set({ locusOwnerId }),
   setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
-  setAutoMovePoints: (autoMovePoints) => set({ autoMovePoints }),
+  setAutoMovePoints: (autoMovePoints) => {
+    const state = get();
+    if (autoMovePoints && !state.markedPoints.some((point) => point.autoMove)) {
+      state.showToast('请先在标记点卡片里勾选“自动移动”', 'info');
+      return;
+    }
+    set({ autoMovePoints });
+  },
   setView2D: (view2dBoundingBox) => set({ view2dBoundingBox }),
   requestViewReset: () => set((state) => ({ viewResetToken: state.viewResetToken + 1 })),
   setParamValue: (name, value) =>
@@ -844,6 +852,24 @@ export const useAppStore = create<AppState>((set, get) => ({
         point.id === id ? { ...point, ...patch } : point,
       ),
     })),
+
+  addFreeMarkedPoint: (point) => {
+    const state = get();
+    const marked: MarkedPoint = {
+      id: uid('pt'),
+      ownerId: '',
+      source: 'free',
+      name: nextMarkedPointName(state.markedPoints),
+      point: { x: point.x, y: point.y },
+      visible: true,
+    };
+    set({
+      markedPoints: [...state.markedPoints, marked],
+      expandedId: marked.id,
+      selectedId: marked.id,
+    });
+    return marked;
+  },
 
   removeMarkedPoint: (id) =>
     set((state) => ({

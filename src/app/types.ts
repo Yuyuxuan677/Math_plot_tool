@@ -209,8 +209,8 @@ export interface MarkedPoint {
   id: string;
   /** Expression curve that owns this point. */
   ownerId: string;
-  /** Manual point or the point of a tangent. */
-  source?: 'manual' | 'tangent';
+  /** Manual point or the point of a tangent, or an off-curve free point. */
+  source?: 'manual' | 'tangent' | 'free';
   /** Present when source === 'tangent'. */
   tangentOwnerId?: string;
   tangentId?: string;
@@ -218,6 +218,10 @@ export interface MarkedPoint {
   name: string;
   point: Point2;
   visible: boolean;
+  /** Whether this point participates when animation is running. */
+  autoMove?: boolean;
+  /** Optional coordinate lock for points that live on a curve. */
+  coordinateLock?: { axis: 'x' | 'y'; value: number };
 }
 
 export interface DivisionMark {
