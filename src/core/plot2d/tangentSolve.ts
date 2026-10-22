@@ -35,6 +35,91 @@ interface AngleCandidate {
 
 const implicitCandidateCache = new Map<string, AngleCandidate[]>();
 
+/**
+ * Follow the current connected branch of an implicit curve instead of searching
+ * the whole view. The ellipse has two parallel tangents for a given angle, so a
+ * global nearest-point search can jump from one to the other and make the
+ * tangent intersection teleport.
+ */
+export function findLocalImplicitTangentPoint(
+  evaluate: (x: number, y: number) => number,
+  start: Point2,
+  desiredAngle: number,
+  scale: number,
+): Point2 | null {
+  const step = Math.max(1e-4, scale / 1200);
+  const maxSteps = 1600;
+  const project = (point: Point2): Point2 | null => {
+    let x = point.x;
+    let y = point.y;
+    for (let iteration = 0; iteration < 6; iteration += 1) {
+      const value = evaluate(x, y);
+      if (!Number.isFinite(value)) return null;
+      const h = 1e-4 * Math.max(1, Math.abs(x), Math.abs(y));
+      const fx = (evaluate(x + h, y) - evaluate(x - h, y)) / (2 * h);
+      const fy = (evaluate(x, y + h) - evaluate(x, y - h)) / (2 * h);
+      const norm = fx * fx + fy * fy;
+      if (!Number.isFinite(norm) || norm < 1e-12) return null;
+      const correction = value / norm;
+      x -= correction * fx;
+      y -= correction * fy;
+      if (Math.abs(value) < 1e-10) break;
+    }
+    return { x, y };
+  };
+  const tangentAt = (point: Point2): { angle: number; tx: number; ty: number } | null => {
+    const h = 1e-4 * Math.max(1, Math.abs(point.x), Math.abs(point.y));
+    const fx = (evaluate(point.x + h, point.y) - evaluate(point.x - h, point.y)) / (2 * h);
+    const fy = (evaluate(point.x, point.y + h) - evaluate(point.x, point.y - h)) / (2 * h);
+    const length = Math.hypot(fx, fy);
+    if (!Number.isFinite(length) || length < 1e-10) return null;
+    return { angle: Math.atan2(fx, -fy), tx: -fy / length, ty: fx / length };
+  };
+  const projected = project(start);
+  if (!projected) return null;
+  const initial = tangentAt(projected);
+  if (!initial) return null;
+  if (angleError(initial.angle, desiredAngle) <= 0.012) return projected;
+
+  let best: { point: Point2; error: number; steps: number; score: number } | null = null;
+  for (const direction of [1, -1]) {
+    let point = projected;
+    let tangent = initial;
+    for (let index = 1; index <= maxSteps; index += 1) {
+      const next = project({
+        x: point.x + direction * tangent.tx * step,
+        y: point.y + direction * tangent.ty * step,
+      });
+      if (!next) break;
+      const nextTangent = tangentAt(next);
+      if (!nextTangent) break;
+      // Keep marching in the same direction; a flipped tangent would indicate
+      // that projection landed on another branch.
+      if (absoluteAngleDifference(nextTangent.angle, tangent.angle) > Math.PI / 2) {
+        break;
+      }
+      point = next;
+      tangent = nextTangent;
+      const error = angleError(tangent.angle, desiredAngle);
+      // Prefer the closest crossing along this branch. Without the step term
+      // the far parallel tangent can win merely because its discrete angle is
+      // slightly more accurate.
+      const score = index + error * 80;
+      if (!best || score < best.score) {
+        best = { point, error, steps: index, score };
+      }
+      if (error <= 0.012) break;
+    }
+  }
+  if (!best || best.error > 0.05) return null;
+  return best.point;
+}
+
+function absoluteAngleDifference(a: number, b: number): number {
+  const difference = Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  return Math.min(difference, Math.PI - difference);
+}
+
 export function findTangentPointForAngle(target: TangentAngleTarget): Point2 | null {
   const analysis = analyze2DItem(target.item);
   if (analysis.errors.length > 0) return null;
@@ -50,11 +135,14 @@ export function findTangentPointForAngle(target: TangentAngleTarget): Point2 | n
   const consider = (point: Point2, tangentAngle: number) => {
     if (!finitePoint(point) || !Number.isFinite(tangentAngle)) return;
     const error = angleError(tangentAngle, target.desiredAngle);
-    if (error > 0.03) return;
+    if (error > 0.12) return;
     const distance = target.currentPoint
       ? Math.hypot(point.x - target.currentPoint.x, point.y - target.currentPoint.y)
       : 0;
-    const score = error * 20 + distance * 0.002;
+    // Continuity first: among all valid-angle candidates choose the one nearest
+    // to the current point. Angle error only breaks ties, otherwise the solver
+    // can hop between the two parallel tangents that satisfy the same angle.
+    const score = distance + error * 0.02;
     if (!bestHolder.value || score < bestHolder.value.score) {
       bestHolder.value = { point, score, error };
     }
@@ -95,6 +183,15 @@ export function findTangentPointForAngle(target: TangentAngleTarget): Point2 | n
     const expression = (analysis as ImplicitAnalysis).expr;
     if (!expression.ok) return null;
     const evaluate = (x: number, y: number) => expression.evaluate(scopeFor(params, { x, y }));
+    if (target.currentPoint) {
+      const local = findLocalImplicitTangentPoint(
+        evaluate,
+        target.currentPoint,
+        target.desiredAngle,
+        Math.max(xMax - xMin, yMax - yMin),
+      );
+      if (local) return local;
+    }
     const cacheKey = [
       target.item.id,
       expression.normalized,
@@ -152,4 +249,5 @@ export function findTangentPointForAngle(target: TangentAngleTarget): Point2 | n
   }
 
   const best = bestHolder.value;
-  return best && best.error <= 0.035 ? best.point : null;}
+  return best ? best.point : null;
+}

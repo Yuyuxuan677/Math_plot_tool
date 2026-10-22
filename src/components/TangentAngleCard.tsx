@@ -69,7 +69,9 @@ export function TangentAngleCard({ constraint }: { constraint: TangentAngleConst
         <div className="setting-row column-setting">
           <div>
             <span className="setting-title">切线 B</span>
-            <p className="setting-hint">拖动任一条，另一条自动旋转；90° 可演示蒙日圆</p>
+            <p className="setting-hint">
+              目标切点会沿当前曲线分支连续移动，不会切换到另一条平行切线
+            </p>
           </div>
           <select
             className="select-field"

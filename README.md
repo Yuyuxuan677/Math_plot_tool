@@ -14,6 +14,7 @@
 
 ![手机端函数图](artifacts/e2e/mobile-2d-edit.png)
 ![标记点与 N 等分点](artifacts/e2e/desktop-2d-marked-points.png)
+![垂直切线交点轨迹](artifacts/e2e/desktop-2d-monge-trace.png)
 ![3D 曲面](artifacts/e2e/mobile-3d.png)
 
 ## 快速开始
@@ -79,6 +80,7 @@ npm run preview
 
 - “添加 → 切线夹角约束”选择两条切线，设置固定夹角（90° 即垂直）
 - 拖动任一条切线时，另一条切线会沿自身曲线自动旋转到目标角度
+- 目标切点沿当前曲线分支连续寻找，不会跳到另一条平行的切线
 - 目标切点由曲线上的数值搜索确定；支持函数、参数曲线和隐式曲线
 - 可交换两条切线的角色
 
