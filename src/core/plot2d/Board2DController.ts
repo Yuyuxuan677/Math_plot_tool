@@ -1,10 +1,15 @@
 import JXG from 'jsxgraph';
 import type {
+  DivisionMark,
   Geometry,
   IntersectionMark,
   Item2D,
+  MarkedPoint,
   Point2,
   Tangent,
+  TangentAngleConstraint,
+  TangentIntersectionMark,
+  TangentRef,
 } from '../../app/types';
 import { formatNumber } from '../../app/utils';
 import { geometryEquation } from '../geometry/equations';
@@ -17,6 +22,7 @@ import {
   type ParametricAnalysis,
 } from './analysis';
 import { buildCurveModels, computeIntersections, type CurveModel } from './intersections';
+import { findTangentPointForAngle } from './tangentSolve';
 
 type AnyElement = any;
 type BoundingBox = [number, number, number, number];
@@ -25,6 +31,10 @@ export interface BoardSnapshot {
   items2d: Item2D[];
   geometry: Geometry[];
   intersections: IntersectionMark[];
+  tangentIntersections: TangentIntersectionMark[];
+  tangentAngleConstraints: TangentAngleConstraint[];
+  markedPoints: MarkedPoint[];
+  divisionMarks: DivisionMark[];
   paramValues: Record<string, string>;
   snapToGrid: boolean;
 }
@@ -39,6 +49,7 @@ export interface BoardCallbacks {
   ) => void;
   onGeometryAnchorChange: (geometryId: string, anchorKey: string, point: Point2) => void;
   onDriverPointChange: (geometryId: string, point: Point2) => void;
+  onMarkedPointChange: (pointId: string, point: Point2) => void;
   onBoardError: (message: string) => void;
 }
 
@@ -90,6 +101,33 @@ interface IntersectionEntry {
   lastShowTrace: boolean;
 }
 
+interface TangentIntersectionEntry {
+  mark: TangentIntersectionMark;
+  point: AnyElement;
+  label: AnyElement;
+  trace: IntersectionTrace | null;
+  lastTraceClearToken: number;
+  lastShowTrace: boolean;
+  lastPoint: Point2 | null;
+}
+
+interface MarkedPointEntry {
+  marked: MarkedPoint;
+  glider: AnyElement;
+  curve: AnyElement;
+}
+
+interface DivisionEntry {
+  mark: DivisionMark;
+  segment: AnyElement | null;
+  points: AnyElement[];
+  labels: AnyElement[];
+  traces: Array<IntersectionTrace | null>;
+  lastTraceClearToken: number;
+  lastShowTrace: boolean;
+  lastDivisions: number;
+}
+
 const INITIAL_BBOX: BoundingBox = [-10, 10, 10, -10];
 
 function isFinitePoint(point: Point2 | null | undefined): point is Point2 {
@@ -104,11 +142,23 @@ export class Board2DController {
   private entries = new Map<string, ExpressionEntry>();
   private geometryEntries = new Map<string, GeometryEntry>();
   private intersectionEntries = new Map<string, IntersectionEntry>();
+  private tangentIntersectionEntries = new Map<string, TangentIntersectionEntry>();
+  private markedPointEntries = new Map<string, MarkedPointEntry>();
+  private divisionEntries = new Map<string, DivisionEntry>();
+  private draggingPointIds = new Set<string>();
+  private tangentConstraintStates = new Map<
+    string,
+    { source: Point2; target: Point2; angleDeg: number }
+  >();
   private driverTargets = new Map<string, AnyElement>();
   private state: BoardSnapshot = {
     items2d: [],
     geometry: [],
     intersections: [],
+    tangentIntersections: [],
+    tangentAngleConstraints: [],
+    markedPoints: [],
+    divisionMarks: [],
     paramValues: {},
     snapToGrid: true,
   };
@@ -140,7 +190,7 @@ export class Board2DController {
         showNavigation: false,
         showCopyright: false,
         showInfobox: false,
-        pan: { enabled: true, needTwoFingers: false },
+        pan: { enabled: true, needTwoFingers: false, needShift: false },
         zoom: { enabled: true, wheel: false },
         keepAspectRatio: true,
         axis: {
@@ -306,6 +356,10 @@ export class Board2DController {
     }
 
     this.syncIntersections(snapshot);
+    this.syncTangentAngleConstraints(snapshot);
+    this.syncTangentIntersections(snapshot);
+    this.syncMarkedPoints(snapshot);
+    this.syncDivisionMarks(snapshot);
 
     try {
       this.board.update();
@@ -521,6 +575,588 @@ export class Board2DController {
 
     for (const [id, entry] of this.intersectionEntries) {
       if (!seen.has(id)) this.destroyIntersectionEntry(entry);
+    }
+  }
+
+  private resolveTangent(ref: TangentRef): {
+    entry: ExpressionEntry;
+    tangent: TangentElements;
+    item: Item2D;
+  } | null {
+    const entry = this.entries.get(ref.ownerId);
+    const tangent = entry?.tangents.get(ref.tangentId);
+    if (!entry || !tangent || !entry.item.visible) return null;
+    return { entry, tangent, item: entry.item };
+  }
+
+  private tangentLineInfo(ref: TangentRef): {
+    px: number;
+    py: number;
+    slope: number;
+    m: number;
+    b: number;
+    vertical: boolean;
+  } | null {
+    const resolved = this.resolveTangent(ref);
+    if (!resolved) return null;
+    try {
+      const px = resolved.tangent.glider.X();
+      const py = resolved.tangent.glider.Y();
+      if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+      const raw = resolved.tangent.line.getSlope();
+      const slope = typeof raw === 'number' && Number.isFinite(raw) ? raw : Infinity;
+      const vertical = !Number.isFinite(slope);
+      return {
+        px,
+        py,
+        slope,
+        m: vertical ? 0 : slope,
+        b: vertical ? 0 : py - slope * px,
+        vertical,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private tangentAngleOf(ref: TangentRef): number | null {
+    const info = this.tangentLineInfo(ref);
+    if (!info) return null;
+    return info.vertical ? Math.PI / 2 : Math.atan2(info.m, 1);
+  }
+
+  private syncTangentAngleConstraints(snapshot: BoardSnapshot): void {
+    if (snapshot.tangentAngleConstraints.length === 0) {
+      this.tangentConstraintStates.clear();
+      return;
+    }
+    const seen = new Set<string>();
+    for (const constraint of snapshot.tangentAngleConstraints) {
+      seen.add(constraint.id);
+      if (
+        constraint.source.ownerId === constraint.target.ownerId &&
+        constraint.source.tangentId === constraint.target.tangentId
+      ) {
+        continue;
+      }
+      const source = this.resolveTangent(constraint.source);
+      const target = this.resolveTangent(constraint.target);
+      const sourceAngle = this.tangentAngleOf(constraint.source);
+      const targetAngle = this.tangentAngleOf(constraint.target);
+      if (!source || !target || sourceAngle === null || targetAngle === null) continue;
+      const sourcePoint = { x: source.tangent.glider.X(), y: source.tangent.glider.Y() };
+      const targetPoint = { x: target.tangent.glider.X(), y: target.tangent.glider.Y() };
+      const previous = this.tangentConstraintStates.get(constraint.id);
+      const sourceMoved =
+        !previous ||
+        Math.hypot(previous.source.x - sourcePoint.x, previous.source.y - sourcePoint.y) > 1e-4 ||
+        Math.abs(previous.angleDeg - constraint.angleDeg) > 1e-6;
+      const targetMoved =
+        !previous ||
+        Math.hypot(previous.target.x - targetPoint.x, previous.target.y - targetPoint.y) > 1e-4;
+      const driver = sourceMoved ? 'source' : targetMoved ? 'target' : null;
+      if (!driver) continue;
+      const desiredAngle =
+        driver === 'source'
+          ? sourceAngle + (constraint.angleDeg * Math.PI) / 180
+          : targetAngle - (constraint.angleDeg * Math.PI) / 180;
+      const moving = driver === 'source' ? target : source;
+      const movingRef = driver === 'source' ? constraint.target : constraint.source;
+      const current = driver === 'source' ? targetPoint : sourcePoint;
+      const point = findTangentPointForAngle({
+        item: moving.item,
+        params: this.numericParams,
+        view: this.getBoundingBox(),
+        desiredAngle,
+        currentPoint: current,
+      });
+      if (!point) continue;
+      if (Math.hypot(point.x - current.x, point.y - current.y) > 1e-4) {
+        try {
+          moving.tangent.glider.setPosition(JXG.COORDS_BY_USER, [point.x, point.y]);
+          this.board.update();
+          this.callbacks.onTangentPointChange(movingRef.ownerId, movingRef.tangentId, point);
+          this.callbacks.onTangentMeta(
+            movingRef.ownerId,
+            movingRef.tangentId,
+            this.tangentMeta(moving.tangent.glider, moving.tangent.line),
+          );
+        } catch {
+          // ignore transient tangent constraint errors
+        }
+      }
+      try {
+        this.tangentConstraintStates.set(constraint.id, {
+          source: { x: source.tangent.glider.X(), y: source.tangent.glider.Y() },
+          target: { x: target.tangent.glider.X(), y: target.tangent.glider.Y() },
+          angleDeg: constraint.angleDeg,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    for (const id of this.tangentConstraintStates.keys()) {
+      if (!seen.has(id)) this.tangentConstraintStates.delete(id);
+    }
+  }
+
+  private ensureTangentIntersectionEntry(mark: TangentIntersectionMark): TangentIntersectionEntry {
+    let entry = this.tangentIntersectionEntries.get(mark.id);
+    if (entry) {
+      entry.mark = mark;
+      return entry;
+    }
+    const point = this.board.create('point', [0, 0], {
+      name: '',
+      withLabel: false,
+      fixed: true,
+      size: 3.4,
+      fillColor: mark.color,
+      strokeColor: '#ffffff',
+      strokeWidth: 1.5,
+      highlight: false,
+      showInfobox: false,
+      visible: false,
+      layer: 11,
+    });
+    const label = this.board.create('text', [0, 0, ''], {
+      fontSize: 11,
+      strokeColor: mark.color,
+      fixed: true,
+      highlight: false,
+      withLabel: false,
+      showInfobox: false,
+      visible: false,
+      layer: 12,
+    });
+    entry = {
+      mark,
+      point,
+      label,
+      trace: null,
+      lastTraceClearToken: mark.traceClearToken,
+      lastShowTrace: mark.showTrace,
+      lastPoint: null,
+    };
+    this.tangentIntersectionEntries.set(mark.id, entry);
+    return entry;
+  }
+
+  private tangentLinesIntersection(refA: TangentRef, refB: TangentRef): Point2 | null {
+    const a = this.tangentLineInfo(refA);
+    const b = this.tangentLineInfo(refB);
+    if (!a || !b) return null;
+    if (a.vertical && b.vertical) return null;
+    if (a.vertical) return { x: a.px, y: b.m * a.px + b.b };
+    if (b.vertical) return { x: b.px, y: a.m * b.px + a.b };
+    if (Math.abs(a.m - b.m) < 1e-9) return null;
+    const x = (b.b - a.b) / (a.m - b.m);
+    return { x, y: a.m * x + a.b };
+  }
+
+  private destroyTangentIntersectionEntry(entry: TangentIntersectionEntry): void {
+    try {
+      this.board.removeObject(entry.point);
+      this.board.removeObject(entry.label);
+      if (entry.trace?.curve) this.board.removeObject(entry.trace.curve);
+    } catch {
+      // ignore
+    }
+    this.tangentIntersectionEntries.delete(entry.mark.id);
+  }
+
+  private syncTangentIntersections(snapshot: BoardSnapshot): void {
+    if (snapshot.tangentIntersections.length === 0 && this.tangentIntersectionEntries.size === 0) {
+      return;
+    }
+    const seen = new Set<string>();
+    for (const mark of snapshot.tangentIntersections) {
+      seen.add(mark.id);
+      const entry = this.ensureTangentIntersectionEntry(mark);
+      const hit =
+        mark.visible && this.resolveTangent(mark.a) && this.resolveTangent(mark.b)
+          ? this.tangentLinesIntersection(mark.a, mark.b)
+          : null;
+      const reset =
+        entry.lastTraceClearToken !== mark.traceClearToken ||
+        entry.lastShowTrace !== mark.showTrace;
+      entry.lastTraceClearToken = mark.traceClearToken;
+      entry.lastShowTrace = mark.showTrace;
+
+      if (hit) {
+        try {
+          entry.point.setAttribute({
+            visible: mark.visible,
+            fillColor: mark.color,
+            strokeColor: '#ffffff',
+          });
+          entry.point.setPosition(JXG.COORDS_BY_USER, [hit.x, hit.y]);
+          entry.label.setAttribute({
+            visible: mark.visible && mark.showCoordinates,
+            strokeColor: mark.color,
+          });
+          entry.label.setText(`(${formatNumber(hit.x)}, ${formatNumber(hit.y)})`);
+          entry.label.setPosition(JXG.COORDS_BY_USER, [hit.x + 0.22, hit.y + 0.22]);
+        } catch {
+          // ignore
+        }
+      } else {
+        try {
+          entry.point.setAttribute({ visible: false });
+          entry.label.setAttribute({ visible: false });
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!entry.trace) {
+        entry.trace = { curve: null, points: [], last: null };
+      }
+      const trace = entry.trace;
+      if (reset || !mark.visible || !mark.showTrace) {
+        this.clearIntersectionTrace(trace);
+      }
+      if (hit && mark.visible && mark.showTrace) {
+        if (!trace.last || Math.hypot(trace.last.x - hit.x, trace.last.y - hit.y) > 1e-4) {
+          trace.points.push({ x: hit.x, y: hit.y });
+          if (trace.points.length > 600) trace.points.splice(0, trace.points.length - 600);
+          trace.last = { x: hit.x, y: hit.y };
+          if (trace.points.length >= 2) this.rebuildIntersectionTrace(trace, mark.color);
+        }
+      }
+      entry.lastPoint = hit;
+    }
+    for (const [id, entry] of this.tangentIntersectionEntries) {
+      if (!seen.has(id)) this.destroyTangentIntersectionEntry(entry);
+    }
+  }
+
+  public findCurvePointAt(
+    x: number,
+    y: number,
+    tolerancePx = 28,
+  ): { ownerId: string; point: Point2; distancePx: number } | null {
+    const bb = this.getBoundingBox();
+    const width = Math.max(1, Number((this.board as any).canvasWidth) || 1);
+    const height = Math.max(1, Number((this.board as any).canvasHeight) || 1);
+    const xSpan = bb[2] - bb[0];
+    const ySpan = bb[1] - bb[3];
+    if (xSpan <= 0 || ySpan <= 0) return null;
+    let bestHolder: { value: { ownerId: string; point: Point2; distancePx: number } | null } = {
+      value: null,
+    };
+    const consider = (ownerId: string, point: Point2) => {
+      if (!isFinitePoint(point)) return;
+      const distancePx = Math.hypot(
+        ((point.x - x) / xSpan) * width,
+        ((point.y - y) / ySpan) * height,
+      );
+      if (!bestHolder.value || distancePx < bestHolder.value.distancePx) {
+        bestHolder.value = { ownerId, point, distancePx };
+      }
+    };
+    for (const [ownerId, entry] of this.entries) {
+      if (!entry.item.visible || !entry.curve) continue;
+      const model = buildCurveModels([entry.item], [], this.numericParams, bb).get(ownerId);
+      if (!model) continue;
+      for (const segment of model.segments) {
+        const samples = 480;
+        for (let index = 0; index <= samples; index += 1) {
+          const t = segment.min + ((segment.max - segment.min) * index) / samples;
+          consider(ownerId, segment.fn(t));
+        }
+      }
+      if (model.implicit) {
+        const grid = 150;
+        for (let iy = 0; iy < grid; iy += 1) {
+          const y0 = bb[3] + ((bb[1] - bb[3]) * iy) / grid;
+          const y1 = bb[3] + ((bb[1] - bb[3]) * (iy + 1)) / grid;
+          for (let ix = 0; ix < grid; ix += 1) {
+            const x0 = bb[0] + ((bb[2] - bb[0]) * ix) / grid;
+            const x1 = bb[0] + ((bb[2] - bb[0]) * (ix + 1)) / grid;
+            const corners = [
+              { x: x0, y: y0, value: model.implicit(x0, y0) },
+              { x: x1, y: y0, value: model.implicit(x1, y0) },
+              { x: x1, y: y1, value: model.implicit(x1, y1) },
+              { x: x0, y: y1, value: model.implicit(x0, y1) },
+            ];
+            for (let edge = 0; edge < 4; edge += 1) {
+              const a = corners[edge];
+              const b = corners[(edge + 1) % 4];
+              if (!Number.isFinite(a.value) || !Number.isFinite(b.value)) continue;
+              if (a.value === 0 || b.value === 0 || a.value * b.value < 0) {
+                const ratio =
+                  Math.abs(a.value) + Math.abs(b.value) < 1e-12
+                    ? 0.5
+                    : Math.abs(a.value) / (Math.abs(a.value) + Math.abs(b.value));
+                consider(ownerId, {
+                  x: a.x + (b.x - a.x) * ratio,
+                  y: a.y + (b.y - a.y) * ratio,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+    const best = bestHolder.value;
+    return best && best.distancePx <= tolerancePx ? best : null;
+  }
+
+  private destroyMarkedPointEntry(entry: MarkedPointEntry): void {
+    try {
+      this.board.removeObject(entry.glider);
+    } catch {
+      // ignore
+    }
+    this.markedPointEntries.delete(entry.marked.id);
+  }
+
+  private ensureMarkedPointEntry(
+    marked: MarkedPoint,
+    curve: AnyElement,
+  ): MarkedPointEntry | null {
+    const existing = this.markedPointEntries.get(marked.id);
+    if (existing && existing.curve === curve) return existing;
+    if (existing) this.destroyMarkedPointEntry(existing);
+    try {
+      const glider = this.board.create('glider', [marked.point.x, marked.point.y, curve], {
+        name: marked.name,
+        withLabel: true,
+        size: 5,
+        fillColor: '#0f766e',
+        strokeColor: '#ffffff',
+        strokeWidth: 2,
+        highlight: false,
+        showInfobox: false,
+        layer: 9,
+        label: {
+          offset: [8, -8],
+          fontSize: 12,
+          strokeColor: '#0f766e',
+        },
+      });
+      const entry: MarkedPointEntry = { marked, glider, curve };
+      glider.on('down', () => {
+        this.draggingPointIds.add(marked.id);
+      });
+      glider.on('drag', () => {
+        this.draggingPointIds.add(marked.id);
+        this.callbacks.onMarkedPointChange(marked.id, {
+          x: glider.X(),
+          y: glider.Y(),
+        });
+      });
+      glider.on('up', () => {
+        this.draggingPointIds.delete(marked.id);
+        this.callbacks.onMarkedPointChange(marked.id, {
+          x: glider.X(),
+          y: glider.Y(),
+        });
+      });
+      this.markedPointEntries.set(marked.id, entry);
+      return entry;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  }
+
+  private syncMarkedPoints(snapshot: BoardSnapshot): void {
+    const seen = new Set<string>();
+    for (const marked of snapshot.markedPoints) {
+      seen.add(marked.id);
+      const expression = this.entries.get(marked.ownerId);
+      if (!expression?.curve) {
+        const existing = this.markedPointEntries.get(marked.id);
+        if (existing) this.destroyMarkedPointEntry(existing);
+        continue;
+      }
+      const entry = this.ensureMarkedPointEntry(marked, expression.curve);
+      if (!entry) continue;
+      entry.marked = marked;
+      const visible = marked.visible && expression.item.visible;
+      try {
+        entry.glider.setAttribute({
+          visible,
+          fillColor: '#0f766e',
+          name: marked.name,
+        });
+        entry.glider.label?.setText?.(marked.name);
+        if (
+          !this.draggingPointIds.has(marked.id) &&
+          (Math.abs(entry.glider.X() - marked.point.x) > 1e-4 ||
+            Math.abs(entry.glider.Y() - marked.point.y) > 1e-4)
+        ) {
+          entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+        }
+      } catch {
+        // transient glider state
+      }
+    }
+    for (const [id, entry] of this.markedPointEntries) {
+      if (!seen.has(id)) this.destroyMarkedPointEntry(entry);
+    }
+  }
+
+  private destroyDivisionEntry(entry: DivisionEntry): void {
+    for (const point of entry.points) {
+      try {
+        this.board.removeObject(point);
+      } catch {
+        // ignore
+      }
+    }
+    for (const label of entry.labels) {
+      try {
+        this.board.removeObject(label);
+      } catch {
+        // ignore
+      }
+    }
+    for (const trace of entry.traces) {
+      if (trace) this.clearIntersectionTrace(trace);
+    }
+    if (entry.segment) {
+      try {
+        this.board.removeObject(entry.segment);
+      } catch {
+        // ignore
+      }
+    }
+    this.divisionEntries.delete(entry.mark.id);
+  }
+
+  private ensureDivisionEntry(
+    mark: DivisionMark,
+    a: MarkedPointEntry,
+    b: MarkedPointEntry,
+  ): DivisionEntry {
+    let entry = this.divisionEntries.get(mark.id);
+    if (
+      entry &&
+      entry.lastDivisions === mark.divisions &&
+      entry.segment &&
+      (entry.segment as any).point1 === a.glider &&
+      (entry.segment as any).point2 === b.glider
+    ) {
+      return entry;
+    }
+    if (entry) this.destroyDivisionEntry(entry);
+    entry = {
+      mark,
+      segment: null,
+      points: [],
+      labels: [],
+      traces: [],
+      lastTraceClearToken: mark.traceClearToken,
+      lastShowTrace: mark.showTrace,
+      lastDivisions: mark.divisions,
+    };
+    try {
+      entry.segment = this.board.create('segment', [a.glider, b.glider], {
+        strokeColor: mark.color,
+        strokeWidth: 1.4,
+        dash: 2,
+        highlight: false,
+        fixed: true,
+        withLabel: false,
+        layer: 7,
+      });
+      const count = Math.max(1, mark.divisions - 1);
+      for (let index = 0; index < count; index += 1) {
+        const point = this.board.create('point', [0, 0], {
+          name: '',
+          withLabel: false,
+          fixed: true,
+          size: 3.2,
+          fillColor: mark.color,
+          strokeColor: '#ffffff',
+          strokeWidth: 1.4,
+          highlight: false,
+          showInfobox: false,
+          layer: 10,
+        });
+        entry.points.push(point);
+        entry.traces.push({ curve: null, points: [], last: null });
+      }
+    } catch (error) {
+      console.error(error);
+    }
+    this.divisionEntries.set(mark.id, entry);
+    return entry;
+  }
+
+  private syncDivisionMarks(snapshot: BoardSnapshot): void {
+    const seen = new Set<string>();
+    for (const mark of snapshot.divisionMarks) {
+      seen.add(mark.id);
+      const a = this.markedPointEntries.get(mark.aId);
+      const b = this.markedPointEntries.get(mark.bId);
+      if (!a || !b) {
+        const existing = this.divisionEntries.get(mark.id);
+        if (existing) this.destroyDivisionEntry(existing);
+        continue;
+      }
+      const entry = this.ensureDivisionEntry(mark, a, b);
+      entry.mark = mark;
+      const reset =
+        entry.lastTraceClearToken !== mark.traceClearToken ||
+        entry.lastShowTrace !== mark.showTrace;
+      entry.lastTraceClearToken = mark.traceClearToken;
+      entry.lastShowTrace = mark.showTrace;
+      let ax: number;
+      let ay: number;
+      let bx: number;
+      let by: number;
+      try {
+        ax = a.glider.X();
+        ay = a.glider.Y();
+        bx = b.glider.X();
+        by = b.glider.Y();
+      } catch {
+        continue;
+      }
+      const count = Math.max(1, mark.divisions - 1);
+      for (let index = 0; index < count; index += 1) {
+        const fraction = (index + 1) / mark.divisions;
+        const point = {
+          x: ax + (bx - ax) * fraction,
+          y: ay + (by - ay) * fraction,
+        };
+        const element = entry.points[index];
+        const trace = entry.traces[index];
+        if (!element || !trace) continue;
+        const visible = mark.visible;
+        try {
+          element.setAttribute({
+            visible,
+            fillColor: mark.color,
+          });
+          element.setPosition(JXG.COORDS_BY_USER, [point.x, point.y]);
+        } catch {
+          // ignore
+        }
+        if (reset || !visible || !mark.showTrace) {
+          this.clearIntersectionTrace(trace);
+        }
+        if (visible && mark.showTrace) {
+          if (!trace.last || Math.hypot(trace.last.x - point.x, trace.last.y - point.y) > 1e-4) {
+            trace.points.push({ x: point.x, y: point.y });
+            if (trace.points.length > 900) trace.points.splice(0, trace.points.length - 900);
+            trace.last = { x: point.x, y: point.y };
+            if (trace.points.length >= 2) this.rebuildIntersectionTrace(trace, mark.color);
+          }
+        }
+      }
+      try {
+        if (entry.segment) entry.segment.setAttribute({ visible: mark.visible, strokeColor: mark.color });
+      } catch {
+        // ignore
+      }
+    }
+    for (const [id, entry] of this.divisionEntries) {
+      if (!seen.has(id)) this.destroyDivisionEntry(entry);
     }
   }
 
@@ -1821,6 +2457,14 @@ export class Board2DController {
       this.geometryEntries.clear();
       this.intersectionEntries.forEach((entry) => this.destroyIntersectionEntry(entry));
       this.intersectionEntries.clear();
+      this.tangentIntersectionEntries.forEach((entry) =>
+        this.destroyTangentIntersectionEntry(entry),
+      );
+      this.tangentIntersectionEntries.clear();
+      this.divisionEntries.forEach((entry) => this.destroyDivisionEntry(entry));
+      this.divisionEntries.clear();
+      this.markedPointEntries.forEach((entry) => this.destroyMarkedPointEntry(entry));
+      this.markedPointEntries.clear();
       const JXGAny = JXG as any;
       JXGAny.JSXGraph.freeBoard(this.board);
     } catch {

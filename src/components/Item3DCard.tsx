@@ -14,12 +14,14 @@ import { NumberField } from './NumberField';
 function kindLabel(kind: Item3D['kind']): string {
   if (kind === 'surface') return '曲面';
   if (kind === 'paramSurface') return '参数曲面';
+  if (kind === 'implicit3d') return '隐式曲面';
   return '空间曲线';
 }
 
 function summaryFor(item: Item3D): string {
   if (item.kind === 'surface') return `z = ${item.expr}`;
   if (item.kind === 'paramSurface') return `(${item.xExpr}, ${item.yExpr}, ${item.zExpr})`;
+  if (item.kind === 'implicit3d') return item.expr || 'F(x,y,z) = 0';
   return `(${item.xExpr}, ${item.yExpr}, ${item.zExpr})`;
 }
 
@@ -222,6 +224,67 @@ export function Item3DCard({ item }: { item: Item3D }) {
                     })
                   }
                   ariaLabel="参数曲面网格精度"
+                  step={2}
+                />
+              </div>
+            </>
+          )}
+
+          {item.kind === 'implicit3d' && (
+            <>
+              <label className="field-label">隐式方程</label>
+              <div className={`field-row ${fieldError('expr') ? 'has-error' : ''}`}>
+                <input
+                  className="expression-input"
+                  type="text"
+                  value={item.expr}
+                  placeholder="例如 x + y + z - 1 = 0 或 x^2+y^2+z^2=4"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  onChange={(event) => updateItem3D(item.id, { expr: event.target.value })}
+                />
+              </div>
+              {fieldError('expr') && <p className="field-error">{fieldError('expr')}</p>}
+              <p className="setting-hint">输入 F(x,y,z)=0 或带等号的方程；3D 最多支持 4 个参数。</p>
+              {(['x', 'y', 'z'] as const).map((axis) => (
+                <div key={axis}>
+                  <div className="setting-heading">{axis} 范围</div>
+                  <div className="range-row">
+                    <NumberField
+                      value={item[`${axis}Min` as 'xMin' | 'yMin' | 'zMin']}
+                      onCommit={(value) =>
+                        updateItem3D(item.id, {
+                          [`${axis}Min`]: value,
+                        } as Partial<Item3D>)
+                      }
+                      ariaLabel={`${axis} 最小值`}
+                      step={0.5}
+                    />
+                    <span className="range-separator">到</span>
+                    <NumberField
+                      value={item[`${axis}Max` as 'xMax' | 'yMax' | 'zMax']}
+                      onCommit={(value) =>
+                        updateItem3D(item.id, {
+                          [`${axis}Max`]: value,
+                        } as Partial<Item3D>)
+                      }
+                      ariaLabel={`${axis} 最大值`}
+                      step={0.5}
+                    />
+                  </div>
+                </div>
+              ))}
+              <div className="setting-row">
+                <span className="setting-title">网格精度</span>
+                <NumberField
+                  value={item.resolution}
+                  onCommit={(value) =>
+                    updateItem3D(item.id, {
+                      resolution: Math.max(12, Math.min(56, Math.round(value))),
+                    })
+                  }
+                  ariaLabel="隐式曲面网格精度"
                   step={2}
                 />
               </div>

@@ -10,8 +10,6 @@ export function EmptyState() {
   const mode = useAppStore((state) => state.mode);
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
-  const geometry = useAppStore((state) => state.geometry);
-  const intersections = useAppStore((state) => state.intersections);
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
   const updateItem2D = useAppStore((state) => state.updateItem2D);
@@ -19,10 +17,7 @@ export function EmptyState() {
   const setSheetExpanded = useAppStore((state) => state.setSheetExpanded);
   const showToast = useAppStore((state) => state.showToast);
 
-  const hasContent =
-    mode === '2d'
-      ? items2d.length + geometry.length + intersections.length > 0
-      : items3d.length > 0;
+  const hasContent = mode === '2d' ? items2d.length > 0 : items3d.length > 0;
   if (hasContent) return null;
 
   const finish = (message: string) => {
@@ -101,6 +96,14 @@ export function EmptyState() {
         finish('已添加螺旋线');
       },
     },
+    {
+      label: '平面',
+      hint: 'x + y + z = 1',
+      apply: () => {
+        addItem3D('implicit3d');
+        finish('已添加隐式平面');
+      },
+    },
   ];
 
   const examples = mode === '2d' ? examples2D : examples3D;
@@ -112,8 +115,8 @@ export function EmptyState() {
         <h1>{mode === '2d' ? '从一个表达式开始' : '看看空间里的形状'}</h1>
         <p className="empty-copy">
           {mode === '2d'
-            ? '输入函数、参数曲线或方程；也可以直接画圆、椭圆和圆锥曲线。'
-            : '输入曲面或空间曲线，拖动旋转、双指缩放。'}
+            ? '输入函数、参数曲线或隐式方程；在对象卡片中添加切线。'
+            : '输入曲面、空间曲线或隐式曲面，拖动旋转、双指缩放。'}
         </p>
         <div className="example-grid">
           {examples.map((example) => (

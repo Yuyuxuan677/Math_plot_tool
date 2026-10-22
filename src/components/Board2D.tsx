@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../app/store';
+import { nextMarkedPointName } from '../app/markedPoints';
 import type { Point2, Tool } from '../app/types';
 import { Board2DController, type BoardSnapshot } from '../core/plot2d/Board2DController';
 import { IconClose, IconMagnet, IconPlus, IconReset } from './Icon';
@@ -9,8 +10,16 @@ interface PendingPoint {
   screen: { left: number; top: number };
 }
 
+interface MarkCandidate {
+  ownerId: string;
+  point: Point2;
+  screen: { left: number; top: number };
+}
+
 function toolLabel(tool: Tool): string {
   switch (tool) {
+    case 'markPoint':
+      return '标记点';
     case 'line':
       return '直线';
     case 'circle':
@@ -27,6 +36,9 @@ function toolLabel(tool: Tool): string {
 }
 
 function instructionFor(tool: Tool, step: number): string {
+  if (tool === 'markPoint') {
+    return step === 0 ? '点击图像上的位置；系统会吸附到最近的曲线' : '确认是否标记这个点';
+  }
   if (tool === 'line') return step === 0 ? '点击直线的第一个端点' : '点击第二个端点';
   if (tool === 'circle') return step === 0 ? '点击圆心' : '点击圆上一点';
   if (tool === 'ellipse') return step === 0 ? '点击椭圆中心' : '点击确定 a、b 的位置';
@@ -41,10 +53,15 @@ export function Board2D() {
   const layerRef = useRef<HTMLDivElement | null>(null);
   const [boardError, setBoardError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingPoint | null>(null);
+  const [markCandidate, setMarkCandidate] = useState<MarkCandidate | null>(null);
 
   const items2d = useAppStore((state) => state.items2d);
   const geometry = useAppStore((state) => state.geometry);
   const intersections = useAppStore((state) => state.intersections);
+  const tangentIntersections = useAppStore((state) => state.tangentIntersections);
+  const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
+  const markedPoints = useAppStore((state) => state.markedPoints);
+  const divisionMarks = useAppStore((state) => state.divisionMarks);
   const paramValues = useAppStore((state) => state.paramValues);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
   const viewResetToken = useAppStore((state) => state.viewResetToken);
@@ -55,6 +72,8 @@ export function Board2D() {
   const setSnapToGrid = useAppStore((state) => state.setSnapToGrid);
   const updateTangentPoint = useAppStore((state) => state.updateTangentPoint);
   const updateTangentMeta = useAppStore((state) => state.updateTangentMeta);
+  const updateMarkedPoint = useAppStore((state) => state.updateMarkedPoint);
+  const addMarkedPoint = useAppStore((state) => state.addMarkedPoint);
   const showToast = useAppStore((state) => state.showToast);
   const addLine = useAppStore((state) => state.addLine);
   const addCircle = useAppStore((state) => state.addCircle);
@@ -67,6 +86,10 @@ export function Board2D() {
       items2d: useAppStore.getState().items2d,
       geometry: useAppStore.getState().geometry,
       intersections: useAppStore.getState().intersections,
+      tangentIntersections: useAppStore.getState().tangentIntersections,
+      tangentAngleConstraints: useAppStore.getState().tangentAngleConstraints,
+      markedPoints: useAppStore.getState().markedPoints,
+      divisionMarks: useAppStore.getState().divisionMarks,
       paramValues: useAppStore.getState().paramValues,
       snapToGrid: useAppStore.getState().snapToGrid,
     }),
@@ -84,6 +107,7 @@ export function Board2D() {
             updateTangentPoint(ownerId, tangentId, point),
           onTangentMeta: (ownerId, tangentId, meta) =>
             updateTangentMeta(ownerId, tangentId, meta),
+          onMarkedPointChange: (pointId, point) => updateMarkedPoint(pointId, { point }),
           onGeometryAnchorChange: (geometryId, anchorKey, point) => {
             const shape = useAppStore
               .getState()
@@ -148,10 +172,24 @@ export function Board2D() {
       items2d,
       geometry,
       intersections,
+      tangentIntersections,
+      tangentAngleConstraints,
+      markedPoints,
+      divisionMarks,
       paramValues,
       snapToGrid,
     });
-  }, [items2d, geometry, intersections, paramValues, snapToGrid]);
+  }, [
+    items2d,
+    geometry,
+    intersections,
+    tangentIntersections,
+    tangentAngleConstraints,
+    markedPoints,
+    divisionMarks,
+    paramValues,
+    snapToGrid,
+  ]);
 
   useEffect(() => {
     if (viewResetToken === 0) return;
@@ -160,6 +198,7 @@ export function Board2D() {
 
   useEffect(() => {
     setPending(null);
+    setMarkCandidate(null);
   }, [activeTool]);
 
   useEffect(() => {
@@ -175,7 +214,10 @@ export function Board2D() {
   }, [activeTool, setActiveTool]);
 
   const toWorld = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>): { world: Point2; screen: PendingPoint['screen'] } | null => {
+    (
+      event: React.PointerEvent<HTMLDivElement>,
+      allowSnap = true,
+    ): { world: Point2; screen: PendingPoint['screen'] } | null => {
       const controller = controllerRef.current;
       const layer = layerRef.current;
       if (!controller || !layer) return null;
@@ -186,7 +228,7 @@ export function Board2D() {
       const fy = (event.clientY - rect.top) / rect.height;
       let x = bbox[0] + fx * (bbox[2] - bbox[0]);
       let y = bbox[1] + fy * (bbox[3] - bbox[1]);
-      if (snapToGrid) {
+      if (snapToGrid && allowSnap) {
         x = Math.round(x * 2) / 2;
         y = Math.round(y * 2) / 2;
       }
@@ -202,6 +244,23 @@ export function Board2D() {
     if (activeTool === 'select') return;
     event.preventDefault();
     event.stopPropagation();
+    if (activeTool === 'markPoint') {
+      const controller = controllerRef.current;
+      if (!controller) return;
+      const hit = toWorld(event, false);
+      if (!hit) return;
+      const curvePoint = controller.findCurvePointAt(hit.world.x, hit.world.y);
+      if (!curvePoint) {
+        showToast('请点击曲线附近的位置', 'info');
+        return;
+      }
+      setMarkCandidate({
+        ownerId: curvePoint.ownerId,
+        point: curvePoint.point,
+        screen: hit.screen,
+      });
+      return;
+    }
     const hit = toWorld(event);
     if (!hit) return;
 
@@ -242,7 +301,7 @@ export function Board2D() {
     setPending(null);
   };
 
-  const toolStep = pending ? 1 : 0;
+  const toolStep = activeTool === 'markPoint' ? (markCandidate ? 1 : 0) : pending ? 1 : 0;
 
   return (
     <div className="board2d-root">
@@ -316,7 +375,53 @@ export function Board2D() {
                 style={{ left: pending.screen.left, top: pending.screen.top }}
               />
             )}
+            {markCandidate && (
+              <span
+                className="pending-dot mark-candidate-dot"
+                style={{
+                  left: markCandidate.screen.left,
+                  top: markCandidate.screen.top,
+                }}
+              />
+            )}
           </div>
+          {markCandidate && (
+            <div
+              className="point-confirm-card"
+              style={{
+                left: Math.min(markCandidate.screen.left + 14, 9999),
+                top: Math.min(markCandidate.screen.top + 14, 9999),
+              }}
+              role="dialog"
+              aria-label="确认标记点"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <span className="point-confirm-title">
+                标记为 {nextMarkedPointName(markedPoints)}？
+              </span>
+              <div className="point-confirm-actions">
+                <button
+                  type="button"
+                  className="primary-small-button"
+                  onClick={() => {
+                    const marked = addMarkedPoint(markCandidate.ownerId, markCandidate.point);
+                    setMarkCandidate(null);
+                    setActiveTool('select');
+                    if (marked) showToast(`已标记点 ${marked.name}`);
+                  }}
+                >
+                  标记
+                </button>
+                <button
+                  type="button"
+                  className="secondary-small-button"
+                  onClick={() => setMarkCandidate(null)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
           <div
             className="tool-hint"
             onPointerDown={(event) => event.stopPropagation()}

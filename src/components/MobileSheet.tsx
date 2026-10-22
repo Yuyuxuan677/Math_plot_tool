@@ -4,20 +4,22 @@ import { ObjectsPanel } from './ObjectsPanel';
 import {
   IconChevronDown,
   IconChevronUp,
-  IconDraw,
   IconPlus,
+  IconTarget,
 } from './Icon';
 
 export function MobileSheet() {
   const expanded = useAppStore((state) => state.sheetExpanded);
   const setExpanded = useAppStore((state) => state.setSheetExpanded);
   const setAddMenuOpen = useAppStore((state) => state.setAddMenuOpen);
-  const setToolTrayOpen = useAppStore((state) => state.setToolTrayOpen);
+  const setActiveTool = useAppStore((state) => state.setActiveTool);
   const mode = useAppStore((state) => state.mode);
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
-  const geometry = useAppStore((state) => state.geometry);
-  const intersections = useAppStore((state) => state.intersections);
+  const tangentIntersections = useAppStore((state) => state.tangentIntersections);
+  const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
+  const markedPoints = useAppStore((state) => state.markedPoints);
+  const divisionMarks = useAppStore((state) => state.divisionMarks);
 
   const startY = useRef<number | null>(null);
   const intent = useRef<'up' | 'down' | null>(null);
@@ -30,7 +32,13 @@ export function MobileSheet() {
   }, [expanded]);
 
   const count =
-    mode === '2d' ? items2d.length + geometry.length + intersections.length : items3d.length;
+    mode === '2d'
+      ? items2d.length +
+        tangentIntersections.length +
+        tangentAngleConstraints.length +
+        markedPoints.length +
+        divisionMarks.length
+      : items3d.length;
 
   const handleFocus = (event: React.FocusEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -107,6 +115,19 @@ export function MobileSheet() {
           {expanded ? <IconChevronDown size={18} /> : <IconChevronUp size={18} />}
         </button>
         <div className="sheet-quick-actions">
+          {mode === '2d' && (
+            <button
+              type="button"
+              className="sheet-quick-button"
+              onClick={() => {
+                setActiveTool('markPoint');
+                setExpanded(false);
+              }}
+            >
+              <IconTarget size={18} />
+              <span>标点</span>
+            </button>
+          )}
           <button
             type="button"
             className="sheet-quick-button"
@@ -115,16 +136,6 @@ export function MobileSheet() {
             <IconPlus size={18} />
             <span>添加</span>
           </button>
-          {mode === '2d' && (
-            <button
-              type="button"
-              className="sheet-quick-button"
-              onClick={() => setToolTrayOpen(true)}
-            >
-              <IconDraw size={18} />
-              <span>画图</span>
-            </button>
-          )}
         </div>
       </div>
 

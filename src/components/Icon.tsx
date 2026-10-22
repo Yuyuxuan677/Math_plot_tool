@@ -53,6 +53,14 @@ export const IconPlus = (p: IconProps) => (
   </Base>
 );
 
+export const IconTarget = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="12" cy="12" r="6" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+  </Base>
+);
+
 export const IconHelp = (p: IconProps) => (
   <Base {...p}>
     <circle cx="12" cy="12" r="9" />

@@ -1,25 +1,35 @@
 import { useEffect } from 'react';
 import { useAppStore } from '../app/store';
 import { ExpressionCard } from './ExpressionCard';
-import { GeometryCard } from './GeometryCard';
-import { IntersectionCard } from './IntersectionCard';
+import { MarkedPointCard } from './MarkedPointCard';
+import { DivisionCard } from './DivisionCard';
 import { Item3DCard } from './Item3DCard';
 import { ParameterPanel } from './ParameterPanel';
-import { IconDraw, IconPlus } from './Icon';
+import { TangentAngleCard } from './TangentAngleCard';
+import { TangentIntersectionCard } from './TangentIntersectionCard';
+import { IconPlus, IconTarget } from './Icon';
 
 export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
   const mode = useAppStore((state) => state.mode);
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
-  const geometry = useAppStore((state) => state.geometry);
-  const intersections = useAppStore((state) => state.intersections);
+  const tangentIntersections = useAppStore((state) => state.tangentIntersections);
+  const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
+  const markedPoints = useAppStore((state) => state.markedPoints);
+  const divisionMarks = useAppStore((state) => state.divisionMarks);
   const expandedId = useAppStore((state) => state.expandedId);
   const setAddMenuOpen = useAppStore((state) => state.setAddMenuOpen);
-  const setToolTrayOpen = useAppStore((state) => state.setToolTrayOpen);
+  const setActiveTool = useAppStore((state) => state.setActiveTool);
 
   const objects = mode === '2d' ? items2d : items3d;
   const count =
-    objects.length + (mode === '2d' ? geometry.length + intersections.length : 0);
+    objects.length +
+    (mode === '2d'
+      ? tangentIntersections.length +
+        tangentAngleConstraints.length +
+        markedPoints.length +
+        divisionMarks.length
+      : 0);
 
   useEffect(() => {
     if (!expandedId) return;
@@ -45,10 +55,10 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
               <button
                 type="button"
                 className="secondary-small-button"
-                onClick={() => setToolTrayOpen(true)}
+                onClick={() => setActiveTool('markPoint')}
               >
-                <IconDraw size={16} />
-                画图
+                <IconTarget size={16} />
+                标点
               </button>
             )}
             <button
@@ -63,7 +73,7 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
         </div>
       )}
 
-      {objects.length === 0 && geometry.length === 0 && intersections.length === 0 && (
+      {objects.length === 0 && (
         <div className="objects-empty">
           <p>还没有对象。</p>
           <button type="button" className="text-button" onClick={() => setAddMenuOpen(true)}>
@@ -80,37 +90,64 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
 
       <ParameterPanel />
 
-      {mode === '2d' && geometry.length > 0 && (
-        <section className="panel-section geometry-section" aria-label="几何图形">
+      {mode === '2d' && markedPoints.length > 0 && (
+        <section className="panel-section marked-points-section" aria-label="标记点">
           <div className="section-heading">
-            <h3>图形</h3>
-            <span className="section-count">{geometry.length}</span>
+            <h3>标记点</h3>
+            <span className="section-count">{markedPoints.length}</span>
           </div>
           <div className="object-list">
-            {geometry.map((shape) => (
-              <GeometryCard key={shape.id} shape={shape} />
+            {markedPoints.map((marked) => (
+              <MarkedPointCard key={marked.id} marked={marked} />
             ))}
           </div>
         </section>
       )}
 
-      {mode === '2d' && intersections.length > 0 && (
-        <section className="panel-section intersections-section" aria-label="交点标记">
+      {mode === '2d' && divisionMarks.length > 0 && (
+        <section className="panel-section divisions-section" aria-label="N 等分点">
           <div className="section-heading">
-            <h3>交点</h3>
-            <span className="section-count">{intersections.length}</span>
+            <h3>N 等分点</h3>
+            <span className="section-count">{divisionMarks.length}</span>
           </div>
           <div className="object-list">
-            {intersections.map((mark) => (
-              <IntersectionCard key={mark.id} mark={mark} />
+            {divisionMarks.map((mark) => (
+              <DivisionCard key={mark.id} mark={mark} />
             ))}
           </div>
         </section>
       )}
 
-      {compact && objects.length === 0 && geometry.length === 0 && intersections.length === 0 && (
-        <p className="sheet-empty-hint">点上方“添加”新建对象，或点“画图”直接在坐标系里画圆。</p>
+      {mode === '2d' && tangentAngleConstraints.length > 0 && (
+        <section className="panel-section tangent-constraints-section" aria-label="切线夹角约束">
+          <div className="section-heading">
+            <h3>切线约束</h3>
+            <span className="section-count">{tangentAngleConstraints.length}</span>
+          </div>
+          <div className="object-list">
+            {tangentAngleConstraints.map((constraint) => (
+              <TangentAngleCard key={constraint.id} constraint={constraint} />
+            ))}
+          </div>
+        </section>
       )}
-    </div>
+
+      {mode === '2d' && tangentIntersections.length > 0 && (
+        <section className="panel-section tangent-intersections-section" aria-label="切线交点">
+          <div className="section-heading">
+            <h3>切线交点</h3>
+            <span className="section-count">{tangentIntersections.length}</span>
+          </div>
+          <div className="object-list">
+            {tangentIntersections.map((mark) => (
+              <TangentIntersectionCard key={mark.id} mark={mark} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {compact && objects.length === 0 && (
+        <p className="sheet-empty-hint">点上方“添加”新建表达式曲线。</p>
+      )}    </div>
   );
 }

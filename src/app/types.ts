@@ -83,8 +83,43 @@ export interface Curve3DItem extends ItemBase3D {
   resolution: number;
 }
 
-export type Item3D = SurfaceItem | ParametricSurfaceItem | Curve3DItem;
+export interface Implicit3DItem extends ItemBase3D {
+  kind: 'implicit3d';
+  expr: string;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  zMin: number;
+  zMax: number;
+  resolution: number;
+}
+
+export type Item3D = SurfaceItem | ParametricSurfaceItem | Curve3DItem | Implicit3DItem;
 export type Item3DKind = Item3D['kind'];
+
+export interface TangentRef {
+  ownerId: string;
+  tangentId: string;
+}
+
+export interface TangentIntersectionMark {
+  id: string;
+  a: TangentRef;
+  b: TangentRef;
+  color: string;
+  visible: boolean;
+  showCoordinates: boolean;
+  showTrace: boolean;
+  traceClearToken: number;
+}
+
+export interface TangentAngleConstraint {
+  id: string;
+  source: TangentRef;
+  target: TangentRef;
+  angleDeg: number;
+}
 
 export interface GeometryBase {
   id: string;
@@ -168,7 +203,31 @@ export type GeometryKindToShape = {
   hyperbola: HyperbolaShape;
 };
 
-export type Tool = 'select' | GeometryKind;
+export type Tool = 'select' | 'markPoint' | GeometryKind;
+
+export interface MarkedPoint {
+  id: string;
+  /** Expression curve that owns this point. */
+  ownerId: string;
+  /** Auto-assigned display name such as A, B, C. */
+  name: string;
+  point: Point2;
+  visible: boolean;
+}
+
+export interface DivisionMark {
+  id: string;
+  /** First marked point. */
+  aId: string;
+  /** Second marked point. */
+  bId: string;
+  /** Number of equal segments; interior points count is divisions - 1. */
+  divisions: number;
+  color: string;
+  visible: boolean;
+  showTrace: boolean;
+  traceClearToken: number;
+}
 
 export interface IntersectionMark {
   id: string;
@@ -194,6 +253,10 @@ export interface PersistedState {
   items3d: Item3D[];
   geometry: Geometry[];
   intersections: IntersectionMark[];
+  tangentIntersections: TangentIntersectionMark[];
+  tangentAngleConstraints: TangentAngleConstraint[];
+  markedPoints: MarkedPoint[];
+  divisionMarks: DivisionMark[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;

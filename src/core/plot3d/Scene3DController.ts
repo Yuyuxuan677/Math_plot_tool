@@ -5,6 +5,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Item3D } from '../../app/types';
 import { analyze3DItem } from '../plot2d/analysis';
+import { buildImplicitSurfaceGeometry } from './implicitSurface';
 
 export interface Scene3DCallbacks {
   onError: (message: string) => void;
@@ -343,7 +344,53 @@ export class Scene3DController {
     if (item.kind === 'surface' || item.kind === 'paramSurface') {
       return this.buildSurface(item, analysis, context);
     }
+    if (item.kind === 'implicit3d') {
+      return this.buildImplicitSurface(item, analysis, context);
+    }
     return this.buildCurve(item, analysis, context);
+  }
+
+  private buildImplicitSurface(
+    item: Extract<Item3D, { kind: 'implicit3d' }>,
+    analysis: ReturnType<typeof analyze3DItem>,
+    context: BuildContext,
+  ): BuiltObject | null {
+    const geometry = buildImplicitSurfaceGeometry({
+      field: (x, y, z) =>
+        this.evalField(analysis.fields, 'expr', { x, y, z }, context.params),
+      xMin: item.xMin,
+      xMax: item.xMax,
+      yMin: item.yMin,
+      yMax: item.yMax,
+      zMin: item.zMin,
+      zMax: item.zMax,
+      resolution: item.resolution,
+    });
+    if (!geometry) return null;
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox?.clone() ?? new THREE.Box3();
+    const material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(item.color),
+      side: THREE.DoubleSide,
+      roughness: 0.56,
+      metalness: 0.03,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = item.id;
+    const wireMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.07,
+      depthWrite: false,
+    });
+    const wireMesh = new THREE.Mesh(geometry, wireMaterial);
+    wireMesh.renderOrder = 2;
+    const group = new THREE.Group();
+    group.name = item.id;
+    group.add(mesh);
+    group.add(wireMesh);
+    return { group, bounds };
   }
 
   private buildSurface(

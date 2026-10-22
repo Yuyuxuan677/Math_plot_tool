@@ -6,9 +6,9 @@ import {
 } from 'mathjs';
 import { normalizeExpression, type PrefixKind } from './normalize';
 
-export type VariableName = 'x' | 'y' | 't' | 'u' | 'v';
+export type VariableName = 'x' | 'y' | 'z' | 't' | 'u' | 'v';
 
-export const RESERVED_VARIABLES: VariableName[] = ['x', 'y', 't', 'u', 'v'];
+export const RESERVED_VARIABLES: VariableName[] = ['x', 'y', 'z', 't', 'u', 'v'];
 
 const ALLOWED_FUNCTIONS = new Set([
   'sin',

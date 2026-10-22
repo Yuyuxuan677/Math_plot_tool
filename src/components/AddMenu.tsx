@@ -7,7 +7,12 @@ export function AddMenu() {
   const mode = useAppStore((state) => state.mode);
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
-  const addIntersection = useAppStore((state) => state.addIntersection);
+  const addTangentIntersection = useAppStore((state) => state.addTangentIntersection);
+  const addTangentAngleConstraint = useAppStore(
+    (state) => state.addTangentAngleConstraint,
+  );
+  const addDivisionMark = useAppStore((state) => state.addDivisionMark);
+  const setActiveTool = useAppStore((state) => state.setActiveTool);
 
   if (!open) return null;
 
@@ -18,9 +23,27 @@ export function AddMenu() {
           { label: '参数曲线', detail: '(x(t), y(t))', action: () => addItem2D('parametric') },
           { label: '隐式方程', detail: 'F(x, y) = 0', action: () => addItem2D('implicit') },
           {
-            label: '交点标记',
-            detail: '选择两条曲线，标记其交点',
-            action: () => addIntersection(),
+            label: '标记点',
+            detail: '点击曲线位置标记 A、B、C…',
+            action: () => {
+              setActiveTool('markPoint');
+              setOpen(false);
+            },
+          },
+          {
+            label: 'N 等分点',
+            detail: '在两个标记点之间显示等分点与轨迹',
+            action: () => addDivisionMark(),
+          },
+          {
+            label: '切线交点',
+            detail: '标记两条切线的交点与轨迹',
+            action: () => addTangentIntersection(),
+          },
+          {
+            label: '切线夹角约束',
+            detail: '保持两条切线固定夹角 / 垂直',
+            action: () => addTangentAngleConstraint(),
           },
         ]
       : [
@@ -34,6 +57,11 @@ export function AddMenu() {
             label: '空间曲线',
             detail: '(x(t), y(t), z(t))',
             action: () => addItem3D('curve3d'),
+          },
+          {
+            label: '隐式曲面',
+            detail: 'F(x, y, z) = 0',
+            action: () => addItem3D('implicit3d'),
           },
         ];
 

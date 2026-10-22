@@ -7,11 +7,9 @@ import { AddMenu } from './components/AddMenu';
 import { Board2D } from './components/Board2D';
 import { EmptyState } from './components/EmptyState';
 import { HelpDialog } from './components/HelpDialog';
-import { LocusDialog } from './components/LocusDialog';
 import { MobileSheet } from './components/MobileSheet';
 import { ObjectsPanel } from './components/ObjectsPanel';
 import { Toast } from './components/Toast';
-import { ToolTray } from './components/ToolTray';
 import { TopBar } from './components/TopBar';
 
 const Scene3D = lazy(() =>
@@ -24,6 +22,12 @@ export default function App() {
   const items3d = useAppStore((state) => state.items3d);
   const geometry = useAppStore((state) => state.geometry);
   const intersections = useAppStore((state) => state.intersections);
+  const tangentIntersections = useAppStore((state) => state.tangentIntersections);
+  const tangentAngleConstraints = useAppStore(
+    (state) => state.tangentAngleConstraints,
+  );
+  const markedPoints = useAppStore((state) => state.markedPoints);
+  const divisionMarks = useAppStore((state) => state.divisionMarks);
   const paramValues = useAppStore((state) => state.paramValues);
   const view2dBoundingBox = useAppStore((state) => state.view2dBoundingBox);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
@@ -39,6 +43,10 @@ export default function App() {
         items3d,
         geometry,
         intersections,
+        tangentIntersections,
+        tangentAngleConstraints,
+        markedPoints,
+        divisionMarks,
         paramValues,
         view2dBoundingBox,
         snapToGrid,
@@ -51,6 +59,10 @@ export default function App() {
     items3d,
     geometry,
     intersections,
+    tangentIntersections,
+    tangentAngleConstraints,
+    markedPoints,
+    divisionMarks,
     paramValues,
     view2dBoundingBox,
     snapToGrid,
@@ -79,8 +91,6 @@ export default function App() {
       </div>
       {isMobile && <MobileSheet />}
       <AddMenu />
-      {mode === '2d' && <ToolTray />}
-      <LocusDialog />
       <HelpDialog />
     </div>
   );

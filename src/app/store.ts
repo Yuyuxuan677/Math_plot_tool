@@ -3,18 +3,21 @@ import { pickColor, toFiniteNumber, uid } from './utils';
 import type {
   CircleShape,
   Curve3DItem,
+  DivisionMark,
   EllipseShape,
   ExplicitItem,
   Geometry,
   GeometryKind,
   HyperbolaShape,
   ImplicitItem,
+  Implicit3DItem,
   Item2D,
   Item2DKind,
   Item3D,
   Item3DKind,
   IntersectionMark,
   LineShape,
+  MarkedPoint,
   Mode,
   Orientation,
   ParametricItem,
@@ -22,9 +25,13 @@ import type {
   ParabolaShape,
   Point2,
   SurfaceItem,
+  TangentAngleConstraint,
+  TangentIntersectionMark,
   Tool,
 } from './types';
 import { buildCurveRefs } from './curveRefs';
+import { buildTangentChoices } from './tangentRefs';
+import { nextMarkedPointName } from './markedPoints';
 import { loadPersistedState } from './persistence';
 import { clearExpressionCaches } from '../core/expression/analyze';
 
@@ -40,6 +47,10 @@ export interface AppState {
   items3d: Item3D[];
   geometry: Geometry[];
   intersections: IntersectionMark[];
+  tangentIntersections: TangentIntersectionMark[];
+  tangentAngleConstraints: TangentAngleConstraint[];
+  markedPoints: MarkedPoint[];
+  divisionMarks: DivisionMark[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;
@@ -91,6 +102,20 @@ export interface AppState {
   addIntersection: () => string | null;
   updateIntersection: (id: string, patch: Partial<IntersectionMark>) => void;
   removeIntersection: (id: string) => void;
+
+  addTangentIntersection: () => string | null;
+  updateTangentIntersection: (id: string, patch: Partial<TangentIntersectionMark>) => void;
+  removeTangentIntersection: (id: string) => void;
+  addTangentAngleConstraint: () => string | null;
+  updateTangentAngleConstraint: (id: string, patch: Partial<TangentAngleConstraint>) => void;
+  removeTangentAngleConstraint: (id: string) => void;
+
+  addMarkedPoint: (ownerId: string, point: Point2) => MarkedPoint | null;
+  updateMarkedPoint: (id: string, patch: Partial<MarkedPoint>) => void;
+  removeMarkedPoint: (id: string) => void;
+  addDivisionMark: () => string | null;
+  updateDivisionMark: (id: string, patch: Partial<DivisionMark>) => void;
+  removeDivisionMark: (id: string) => void;
 
   addTangent: (ownerId: string) => void;
   removeTangent: (ownerId: string, tangentId: string) => void;
@@ -192,6 +217,23 @@ function curve3DItem(color: string): Curve3DItem {
   };
 }
 
+function implicit3DItem(color: string): Implicit3DItem {
+  return {
+    id: uid('isrf'),
+    kind: 'implicit3d',
+    color,
+    visible: true,
+    expr: 'x + y + z - 1',
+    xMin: -4,
+    xMax: 4,
+    yMin: -4,
+    yMax: 4,
+    zMin: -4,
+    zMax: 4,
+    resolution: 34,
+  };
+}
+
 function geometryDefaults(kind: GeometryKind, color: string): GeometryBaseFields {
   return {
     id: uid(kind),
@@ -259,6 +301,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   items3d: persisted?.items3d ?? [],
   geometry: persisted?.geometry ?? [],
   intersections: persisted?.intersections ?? [],
+  tangentIntersections: persisted?.tangentIntersections ?? [],
+  tangentAngleConstraints: persisted?.tangentAngleConstraints ?? [],
+  markedPoints: persisted?.markedPoints ?? [],
+  divisionMarks: persisted?.divisionMarks ?? [],
   paramValues: persisted?.paramValues ?? initialParamValues(),
   view2dBoundingBox: persisted?.view2dBoundingBox ?? null,
   snapToGrid: persisted?.snapToGrid ?? true,
@@ -324,7 +370,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? surfaceItem(color)
         : kind === 'paramSurface'
           ? parametricSurfaceItem(color)
-          : curve3DItem(color);
+          : kind === 'implicit3d'
+            ? implicit3DItem(color)
+            : curve3DItem(color);
     set({
       items3d: [...state.items3d, item],
       selectedId: item.id,
@@ -376,6 +424,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         intersections: state.intersections.filter(
           (item) => item.id !== id && item.aId !== id && item.bId !== id,
         ),
+        tangentIntersections: state.tangentIntersections.filter(
+          (mark) => mark.a.ownerId !== id && mark.b.ownerId !== id,
+        ),
+        tangentAngleConstraints: state.tangentAngleConstraints.filter(
+          (constraint) =>
+            constraint.source.ownerId !== id && constraint.target.ownerId !== id,
+        ),
+        markedPoints: state.markedPoints.filter((point) => point.ownerId !== id),
+        divisionMarks: state.divisionMarks.filter((mark) => {
+          const a = state.markedPoints.find((point) => point.id === mark.aId);
+          const b = state.markedPoints.find((point) => point.id === mark.bId);
+          return !!a && !!b && a.ownerId !== id && b.ownerId !== id;
+        }),
       };
       if (state.expandedId === id) next.expandedId = null;
       if (state.selectedId === id) next.selectedId = null;
@@ -594,6 +655,168 @@ export const useAppStore = create<AppState>((set, get) => ({
       return next;
     }),
 
+  addTangentIntersection: () => {
+    const state = get();
+    const refs = buildTangentChoices(state.items2d);
+    if (refs.length < 2) {
+      state.showToast('至少需要两条切线才能标记切线的交点', 'error');
+      return null;
+    }
+    const mark: TangentIntersectionMark = {
+      id: uid('tix'),
+      a: { ownerId: refs[0].ownerId, tangentId: refs[0].tangentId },
+      b: { ownerId: refs[1].ownerId, tangentId: refs[1].tangentId },
+      color: pickColor([
+        ...state.items2d.map((item) => item.color),
+        ...state.tangentIntersections.map((item) => item.color),
+      ]),
+      visible: true,
+      showCoordinates: true,
+      showTrace: false,
+      traceClearToken: 0,
+    };
+    set({
+      tangentIntersections: [...state.tangentIntersections, mark],
+      expandedId: mark.id,
+      selectedId: mark.id,
+      addMenuOpen: false,
+      sheetExpanded: false,
+      mode: '2d',
+    });
+    return mark.id;
+  },
+
+  updateTangentIntersection: (id, patch) =>
+    set((state) => ({
+      tangentIntersections: state.tangentIntersections.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      ),
+    })),
+
+  removeTangentIntersection: (id) =>
+    set((state) => ({
+      tangentIntersections: state.tangentIntersections.filter((item) => item.id !== id),
+      expandedId: state.expandedId === id ? null : state.expandedId,
+      selectedId: state.selectedId === id ? null : state.selectedId,
+    })),
+
+  addTangentAngleConstraint: () => {
+    const state = get();
+    const refs = buildTangentChoices(state.items2d);
+    if (refs.length < 2) {
+      state.showToast('至少需要两条切线才能设置夹角约束', 'error');
+      return null;
+    }
+    const constraint: TangentAngleConstraint = {
+      id: uid('tac'),
+      source: { ownerId: refs[0].ownerId, tangentId: refs[0].tangentId },
+      target: { ownerId: refs[1].ownerId, tangentId: refs[1].tangentId },
+      angleDeg: 90,
+    };
+    set({
+      tangentAngleConstraints: [...state.tangentAngleConstraints, constraint],
+      expandedId: constraint.id,
+      selectedId: constraint.id,
+      addMenuOpen: false,
+      sheetExpanded: false,
+      mode: '2d',
+    });
+    return constraint.id;
+  },
+
+  updateTangentAngleConstraint: (id, patch) =>
+    set((state) => ({
+      tangentAngleConstraints: state.tangentAngleConstraints.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      ),
+    })),
+
+  removeTangentAngleConstraint: (id) =>
+    set((state) => ({
+      tangentAngleConstraints: state.tangentAngleConstraints.filter((item) => item.id !== id),
+      expandedId: state.expandedId === id ? null : state.expandedId,
+      selectedId: state.selectedId === id ? null : state.selectedId,
+    })),
+
+  addMarkedPoint: (ownerId, point) => {
+    const state = get();
+    if (!state.items2d.some((item) => item.id === ownerId)) return null;
+    const marked: MarkedPoint = {
+      id: uid('pt'),
+      ownerId,
+      name: nextMarkedPointName(state.markedPoints),
+      point: { x: point.x, y: point.y },
+      visible: true,
+    };
+    set({
+      markedPoints: [...state.markedPoints, marked],
+      expandedId: marked.id,
+      selectedId: marked.id,
+      addMenuOpen: false,
+    });
+    return marked;
+  },
+
+  updateMarkedPoint: (id, patch) =>
+    set((state) => ({
+      markedPoints: state.markedPoints.map((point) =>
+        point.id === id ? { ...point, ...patch } : point,
+      ),
+    })),
+
+  removeMarkedPoint: (id) =>
+    set((state) => ({
+      markedPoints: state.markedPoints.filter((point) => point.id !== id),
+      divisionMarks: state.divisionMarks.filter(
+        (mark) => mark.aId !== id && mark.bId !== id,
+      ),
+      expandedId: state.expandedId === id ? null : state.expandedId,
+      selectedId: state.selectedId === id ? null : state.selectedId,
+    })),
+
+  addDivisionMark: () => {
+    const state = get();
+    if (state.markedPoints.length < 2) {
+      state.showToast('至少需要标记两个点才能显示 N 等分点', 'error');
+      return null;
+    }
+    const mark: DivisionMark = {
+      id: uid('div'),
+      aId: state.markedPoints[0].id,
+      bId: state.markedPoints[1].id,
+      divisions: 2,
+      color: pickColor([
+        ...state.items2d.map((item) => item.color),
+        ...state.divisionMarks.map((mark) => mark.color),
+      ]),
+      visible: true,
+      showTrace: false,
+      traceClearToken: 0,
+    };
+    set({
+      divisionMarks: [...state.divisionMarks, mark],
+      expandedId: mark.id,
+      selectedId: mark.id,
+      addMenuOpen: false,
+      sheetExpanded: false,
+    });
+    return mark.id;
+  },
+
+  updateDivisionMark: (id, patch) =>
+    set((state) => ({
+      divisionMarks: state.divisionMarks.map((mark) =>
+        mark.id === id ? { ...mark, ...patch } : mark,
+      ),
+    })),
+
+  removeDivisionMark: (id) =>
+    set((state) => ({
+      divisionMarks: state.divisionMarks.filter((mark) => mark.id !== id),
+      expandedId: state.expandedId === id ? null : state.expandedId,
+      selectedId: state.selectedId === id ? null : state.selectedId,
+    })),
+
   addTangent: (ownerId) =>
     set((state) => {
       const tangent = { id: uid('tan'), point: null };
@@ -609,18 +832,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
 
   removeTangent: (ownerId, tangentId) =>
-    set((state) => ({
-      items2d: state.items2d.map((item) =>
-        item.id === ownerId
-          ? { ...item, tangents: item.tangents.filter((tangent) => tangent.id !== tangentId) }
-          : item,
-      ),
-      geometry: state.geometry.map((item) =>
-        item.id === ownerId
-          ? { ...item, tangents: item.tangents.filter((tangent) => tangent.id !== tangentId) }
-          : item,
-      ),
-    })),
+    set((state) => {
+      const keep = (ref: { ownerId: string; tangentId: string }) =>
+        !(ref.ownerId === ownerId && ref.tangentId === tangentId);
+      return {
+        items2d: state.items2d.map((item) =>
+          item.id === ownerId
+            ? { ...item, tangents: item.tangents.filter((tangent) => tangent.id !== tangentId) }
+            : item,
+        ),
+        geometry: state.geometry.map((item) =>
+          item.id === ownerId
+            ? { ...item, tangents: item.tangents.filter((tangent) => tangent.id !== tangentId) }
+            : item,
+        ),
+        tangentIntersections: state.tangentIntersections.filter(
+          (mark) => keep(mark.a) && keep(mark.b),
+        ),
+        tangentAngleConstraints: state.tangentAngleConstraints.filter(
+          (constraint) => keep(constraint.source) && keep(constraint.target),
+        ),
+      };
+    }),
 
   updateTangentPoint: (ownerId, tangentId, point) =>
     set((state) => ({
@@ -677,6 +910,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       items3d: [],
       geometry: [],
       intersections: [],
+      tangentIntersections: [],
+      tangentAngleConstraints: [],
+      markedPoints: [],
+      divisionMarks: [],
       paramValues: {},
       view2dBoundingBox: null,
       selectedId: null,

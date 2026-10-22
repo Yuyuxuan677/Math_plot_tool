@@ -70,7 +70,7 @@ export function ParameterPanel() {
           );
         })}
       </div>
-      <p className="section-note">每个输入框最多 3 个参数；同名参数共享数值。</p>
+      <p className="section-note">2D 每个输入框最多 3 个参数；3D 最多 4 个；同名参数共享数值。</p>
     </section>
   );
 }

@@ -110,7 +110,11 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
     fields = [
       {
         field: 'expr',
-        analysis: analyzeExpression(item.expr, { allowedVars: ['x', 'y'], stripPrefix: 'z' }),
+        analysis: analyzeExpression(item.expr, {
+          allowedVars: ['x', 'y'],
+          stripPrefix: 'z',
+          maxParams: 4,
+        }),
       },
     ];
   } else if (item.kind === 'paramSurface') {
@@ -120,6 +124,7 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
         analysis: analyzeExpression(item.xExpr, {
           allowedVars: ['u', 'v'],
           stripPrefix: 'x-uv',
+          maxParams: 4,
         }),
       },
       {
@@ -127,6 +132,7 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
         analysis: analyzeExpression(item.yExpr, {
           allowedVars: ['u', 'v'],
           stripPrefix: 'y-uv',
+          maxParams: 4,
         }),
       },
       {
@@ -134,6 +140,18 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
         analysis: analyzeExpression(item.zExpr, {
           allowedVars: ['u', 'v'],
           stripPrefix: 'z-uv',
+          maxParams: 4,
+        }),
+      },
+    ];
+  } else if (item.kind === 'implicit3d') {
+    fields = [
+      {
+        field: 'expr',
+        analysis: analyzeExpression(item.expr, {
+          allowedVars: ['x', 'y', 'z'],
+          allowEquation: true,
+          maxParams: 4,
         }),
       },
     ];
@@ -144,6 +162,7 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
         analysis: analyzeExpression(item.xExpr, {
           allowedVars: ['t'],
           stripPrefix: 'x-3d-t',
+          maxParams: 4,
         }),
       },
       {
@@ -151,6 +170,7 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
         analysis: analyzeExpression(item.yExpr, {
           allowedVars: ['t'],
           stripPrefix: 'y-3d-t',
+          maxParams: 4,
         }),
       },
       {
@@ -158,6 +178,7 @@ export function analyze3DItem(item: Item3D): Item3DAnalysis {
         analysis: analyzeExpression(item.zExpr, {
           allowedVars: ['t'],
           stripPrefix: 'z-3d-t',
+          maxParams: 4,
         }),
       },
     ];
