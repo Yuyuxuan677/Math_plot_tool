@@ -109,6 +109,21 @@ async function curveElements(page) {
   });
 }
 
+async function tracePixelCount(page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('.jxg-trace-overlay');
+    if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0) return 0;
+    const context = canvas.getContext('2d');
+    if (!context) return 0;
+    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let count = 0;
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] > 10) count += 1;
+    }
+    return count;
+  });
+}
+
 async function runDesktop() {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
@@ -155,7 +170,7 @@ async function runDesktop() {
     assert.equal(await page.locator('.division-card').count(), 1, 'division card missing');
     assert((await page.locator('.division-card').innerText()).includes('1 个内分点'));
     const divisionCard = page.locator('.division-card').first();
-    const curvesBeforeTrace = await curveElements(page);
+    const pixelsBeforeTrace = await tracePixelCount(page);
     await divisionCard.getByRole('switch', { name: '记录等分点轨迹' }).click();
     await page.waitForTimeout(300);
     const pointA = await page.evaluate(() => {
@@ -174,7 +189,7 @@ async function runDesktop() {
     await page.mouse.up();
     await page.waitForTimeout(800);
     assert(
-      (await curveElements(page)) > curvesBeforeTrace,
+      (await tracePixelCount(page)) > pixelsBeforeTrace,
       'division point trace was not drawn',
     );
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-marked-points.png` });
@@ -216,6 +231,36 @@ async function runDesktop() {
       'tangent intersection coordinates were not drawn',
     );
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-tangent-features.png` });
+
+    const tangentCard = page.locator('.tangent-intersection-card').first();
+    await tangentCard.getByRole('switch', { name: '记录切线交点轨迹' }).click();
+    await page.waitForTimeout(250);
+    const tangentGlider = await page.evaluate(() => {
+      const boards = window.JXG?.boards;
+      const board = boards ? Object.values(boards)[0] : null;
+      if (!board?.objectsList) return null;
+      const glider = board.objectsList.find(
+        (object) =>
+          object.elType === 'glider' && object.name !== 'A' && object.name !== 'B',
+      );
+      return glider ? { x: glider.X(), y: glider.Y() } : null;
+    });
+    assert(tangentGlider, 'tangent glider missing');
+    const tangentPixelsBefore = await tracePixelCount(page);
+    const tangentStart = await screenFor(page, tangentGlider.x, tangentGlider.y);
+    await page.mouse.move(tangentStart.left, tangentStart.top);
+    await page.mouse.down();
+    for (let index = 1; index <= 16; index += 1) {
+      await page.mouse.move(tangentStart.left + index * 14, tangentStart.top + index * 8);
+      await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    assert(
+      (await tracePixelCount(page)) > tangentPixelsBefore,
+      'tangent intersection trace was not drawn',
+    );
+    await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-tangent-trace.png` });
 
     const functionCardAgain = await expandCard(page, '.object-card[data-kind="explicit"]');
     const functionInputAgain = functionCardAgain.locator('.expression-input').first();

@@ -143,6 +143,9 @@ export class Board2DController {
   private geometryEntries = new Map<string, GeometryEntry>();
   private intersectionEntries = new Map<string, IntersectionEntry>();
   private tangentIntersectionEntries = new Map<string, TangentIntersectionEntry>();
+  private traceCanvas: HTMLCanvasElement | null = null;
+  private traceContext: CanvasRenderingContext2D | null = null;
+  private traceFrame: number | null = null;
   private markedPointEntries = new Map<string, MarkedPointEntry>();
   private divisionEntries = new Map<string, DivisionEntry>();
   private draggingPointIds = new Set<string>();
@@ -215,6 +218,7 @@ export class Board2DController {
 
     this.board.on('boundingbox', () => {
       if (this.disposed) return;
+      this.requestTraceRedraw();
       if (this.viewTimer) window.clearTimeout(this.viewTimer);
       this.viewTimer = window.setTimeout(() => {
         if (this.disposed) return;
@@ -249,6 +253,13 @@ export class Board2DController {
           this.zoomAt(factor, anchorX, anchorY);
         };
         container.addEventListener('wheel', this.wheelHandler, { passive: false });
+        const traceCanvas = document.createElement('canvas');
+        traceCanvas.className = 'jxg-trace-overlay';
+        traceCanvas.style.cssText =
+          'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+        container.appendChild(traceCanvas);
+        this.traceCanvas = traceCanvas;
+        this.traceContext = traceCanvas.getContext('2d');
         this.resizeObserver = new ResizeObserver((entries) => {
           if (this.disposed) return;
           const entry = entries[0];
@@ -261,6 +272,7 @@ export class Board2DController {
           } catch {
             // Some JSXGraph versions resize automatically.
           }
+          this.requestTraceRedraw();
         });
         this.resizeObserver.observe(container);
       }
@@ -405,6 +417,79 @@ export class Board2DController {
     const trace: IntersectionTrace = { curve: null, points: [], last: null };
     entry.traces[index] = trace;
     return trace;
+  }
+
+  private requestTraceRedraw(): void {
+    if (this.disposed || this.traceFrame !== null) return;
+    this.traceFrame = window.requestAnimationFrame(() => {
+      this.traceFrame = null;
+      this.drawTraceOverlay();
+    });
+  }
+
+  private drawTraceOverlay(): void {
+    const canvas = this.traceCanvas;
+    const context = this.traceContext;
+    const container = this.boardContainer;
+    if (!canvas || !context || !container || this.disposed) return;
+    const rect = container.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const pixelWidth = Math.max(1, Math.round(width * dpr));
+    const pixelHeight = Math.max(1, Math.round(height * dpr));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const bb = this.getBoundingBox();
+    if (bb[2] === bb[0] || bb[1] === bb[3]) return;
+    const project = (point: Point2): [number, number] => [
+      ((point.x - bb[0]) / (bb[2] - bb[0])) * width,
+      ((bb[1] - point.y) / (bb[1] - bb[3])) * height,
+    ];
+    const drawPath = (points: Point2[], color: string, lineWidth: number) => {
+      if (points.length < 2) return;
+      context.strokeStyle = color;
+      context.lineWidth = lineWidth;
+      context.globalAlpha = 0.86;
+      context.lineJoin = 'round';
+      context.lineCap = 'round';
+      const projected = points.map(project);
+      context.beginPath();
+      context.moveTo(projected[0][0], projected[0][1]);
+      if (projected.length === 2) {
+        context.lineTo(projected[1][0], projected[1][1]);
+      } else {
+        for (let index = 1; index < projected.length - 1; index += 1) {
+          const current = projected[index];
+          const next = projected[index + 1];
+          context.quadraticCurveTo(
+            current[0],
+            current[1],
+            (current[0] + next[0]) / 2,
+            (current[1] + next[1]) / 2,
+          );
+        }
+        const last = projected[projected.length - 1];
+        context.lineTo(last[0], last[1]);
+      }
+      context.stroke();
+    };
+    for (const entry of this.tangentIntersectionEntries.values()) {
+      const trace = entry.trace;
+      if (!trace || trace.points.length < 2) continue;
+      drawPath(trace.points, entry.mark.color, 2.4);
+    }
+    for (const entry of this.divisionEntries.values()) {
+      for (const trace of entry.traces) {
+        if (!trace || trace.points.length < 2) continue;
+        drawPath(trace.points, entry.mark.color, 2);
+      }
+    }
+    context.globalAlpha = 1;
   }
 
   private rebuildIntersectionTrace(trace: IntersectionTrace, color: string): void {
@@ -765,6 +850,28 @@ export class Board2DController {
     this.tangentIntersectionEntries.delete(entry.mark.id);
   }
 
+  private clearTangentTracesFor(ownerId: string, tangentId: string): void {
+    for (const entry of this.tangentIntersectionEntries.values()) {
+      const references =
+        (entry.mark.a.ownerId === ownerId && entry.mark.a.tangentId === tangentId) ||
+        (entry.mark.b.ownerId === ownerId && entry.mark.b.tangentId === tangentId);
+      if (!references || !entry.trace) continue;
+      this.clearIntersectionTrace(entry.trace);
+    }
+    this.requestTraceRedraw();
+  }
+
+  private traceJumpTooLarge(last: Point2, next: Point2): boolean {
+    const container = this.boardContainer;
+    if (!container) return false;
+    const rect = container.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const bb = this.getBoundingBox();
+    const dx = ((next.x - last.x) / (bb[2] - bb[0])) * rect.width;
+    const dy = ((next.y - last.y) / (bb[1] - bb[3])) * rect.height;
+    return Math.hypot(dx, dy) > 70;
+  }
+
   private syncTangentIntersections(snapshot: BoardSnapshot): void {
     if (snapshot.tangentIntersections.length === 0 && this.tangentIntersectionEntries.size === 0) {
       return;
@@ -817,11 +924,13 @@ export class Board2DController {
         this.clearIntersectionTrace(trace);
       }
       if (hit && mark.visible && mark.showTrace) {
+        if (trace.last && this.traceJumpTooLarge(trace.last, hit)) {
+          this.clearIntersectionTrace(trace);
+        }
         if (!trace.last || Math.hypot(trace.last.x - hit.x, trace.last.y - hit.y) > 1e-4) {
           trace.points.push({ x: hit.x, y: hit.y });
           if (trace.points.length > 600) trace.points.splice(0, trace.points.length - 600);
           trace.last = { x: hit.x, y: hit.y };
-          if (trace.points.length >= 2) this.rebuildIntersectionTrace(trace, mark.color);
         }
       }
       entry.lastPoint = hit;
@@ -829,6 +938,7 @@ export class Board2DController {
     for (const [id, entry] of this.tangentIntersectionEntries) {
       if (!seen.has(id)) this.destroyTangentIntersectionEntry(entry);
     }
+    this.requestTraceRedraw();
   }
 
   public findCurvePointAt(
@@ -1145,7 +1255,6 @@ export class Board2DController {
             trace.points.push({ x: point.x, y: point.y });
             if (trace.points.length > 900) trace.points.splice(0, trace.points.length - 900);
             trace.last = { x: point.x, y: point.y };
-            if (trace.points.length >= 2) this.rebuildIntersectionTrace(trace, mark.color);
           }
         }
       }
@@ -1158,6 +1267,7 @@ export class Board2DController {
     for (const [id, entry] of this.divisionEntries) {
       if (!seen.has(id)) this.destroyDivisionEntry(entry);
     }
+    this.requestTraceRedraw();
   }
 
   private getEntry(item: Item2D): ExpressionEntry {
@@ -1582,6 +1692,9 @@ export class Board2DController {
           if (Number.isFinite(px) && Number.isFinite(py)) {
             this.callbacks.onTangentPointChange(entry.id, tangent.id, { x: px, y: py });
           }
+        });
+        glider.on('down', () => {
+          this.clearTangentTracesFor(entry.id, tangent.id);
         });
         glider.on('up', () => {
           pushPoint();
@@ -2445,6 +2558,13 @@ export class Board2DController {
     if (this.disposed) return;
     this.disposed = true;
     if (this.viewTimer) window.clearTimeout(this.viewTimer);
+    if (this.traceFrame !== null) {
+      window.cancelAnimationFrame(this.traceFrame);
+      this.traceFrame = null;
+    }
+    this.traceCanvas?.remove();
+    this.traceCanvas = null;
+    this.traceContext = null;
     this.resizeObserver?.disconnect();
     if (this.boardContainer && this.wheelHandler) {
       this.boardContainer.removeEventListener('wheel', this.wheelHandler);
