@@ -63,6 +63,7 @@ export function Board2D() {
   const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const markerLines = useAppStore((state) => state.markerLines);
   const autoMovePoints = useAppStore((state) => state.autoMovePoints);
   const paramValues = useAppStore((state) => state.paramValues);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
@@ -77,6 +78,7 @@ export function Board2D() {
   const updateMarkedPoint = useAppStore((state) => state.updateMarkedPoint);
   const addMarkedPoint = useAppStore((state) => state.addMarkedPoint);
   const addFreeMarkedPoint = useAppStore((state) => state.addFreeMarkedPoint);
+  const syncIntersectionMarkers = useAppStore((state) => state.syncIntersectionMarkers);
   const showToast = useAppStore((state) => state.showToast);
   const addLine = useAppStore((state) => state.addLine);
   const addCircle = useAppStore((state) => state.addCircle);
@@ -93,6 +95,7 @@ export function Board2D() {
       tangentAngleConstraints: useAppStore.getState().tangentAngleConstraints,
       markedPoints: useAppStore.getState().markedPoints,
       divisionMarks: useAppStore.getState().divisionMarks,
+      markerLines: useAppStore.getState().markerLines,
       paramValues: useAppStore.getState().paramValues,
       snapToGrid: useAppStore.getState().snapToGrid,
     }),
@@ -111,6 +114,8 @@ export function Board2D() {
           onTangentMeta: (ownerId, tangentId, meta) =>
             updateTangentMeta(ownerId, tangentId, meta),
           onMarkedPointChange: (pointId, point) => updateMarkedPoint(pointId, { point }),
+          onIntersectionPoints: (markId, kind, points) =>
+            syncIntersectionMarkers(markId, kind, points),
           onGeometryAnchorChange: (geometryId, anchorKey, point) => {
             const shape = useAppStore
               .getState()
@@ -179,6 +184,7 @@ export function Board2D() {
       tangentAngleConstraints,
       markedPoints,
       divisionMarks,
+      markerLines,
       paramValues,
       snapToGrid,
     });
@@ -190,6 +196,7 @@ export function Board2D() {
     tangentAngleConstraints,
     markedPoints,
     divisionMarks,
+    markerLines,
     paramValues,
     snapToGrid,
   ]);

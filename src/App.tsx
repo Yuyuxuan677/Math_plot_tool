@@ -28,6 +28,7 @@ export default function App() {
   );
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const markerLines = useAppStore((state) => state.markerLines);
   const paramValues = useAppStore((state) => state.paramValues);
   const view2dBoundingBox = useAppStore((state) => state.view2dBoundingBox);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
@@ -47,6 +48,7 @@ export default function App() {
         tangentAngleConstraints,
         markedPoints,
         divisionMarks,
+        markerLines,
         paramValues,
         view2dBoundingBox,
         snapToGrid,
@@ -63,6 +65,7 @@ export default function App() {
     tangentAngleConstraints,
     markedPoints,
     divisionMarks,
+    markerLines,
     paramValues,
     view2dBoundingBox,
     snapToGrid,

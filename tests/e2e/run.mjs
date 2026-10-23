@@ -316,7 +316,7 @@ async function runDesktop() {
     assert.equal(await page.locator('.object-card[data-kind]').count(), 2, 'expression persistence failed');
     assert.equal(await page.locator('.tangent-angle-card').count(), 1, 'angle constraint persistence failed');
     assert.equal(await page.locator('.tangent-intersection-card').count(), 1, 'intersection persistence failed');
-    assert.equal(await page.locator('.marked-point-card').count(), 6, 'marked point persistence failed');
+    assert.equal(await page.locator('.marked-point-card').count(), 7, 'marked point persistence failed');
     assert.equal(await page.locator('.division-card').count(), 1, 'division persistence failed');
 
     const tickBefore = await tickPositions(page);
@@ -451,6 +451,57 @@ async function runMobile() {
   }
 }
 
+async function runUnifiedTools() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await context.newPage();
+  attachWatch(page, 'unified-tools');
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: /y = x²/ }).click();
+    await page.waitForTimeout(400);
+
+    await addOption(page, '交点');
+    assert.equal(await page.locator('.intersection-card').count(), 1, 'axis intersection missing');
+    assert(
+      (await page.locator('.marked-point-card').first().innerText()).includes('交点 A'),
+      'intersection was not registered as a marked point',
+    );
+
+    await page.locator('.objects-panel-head .primary-small-button').click();
+    await page.waitForTimeout(150);
+    await page.locator('.action-option').filter({ hasText: '函数' }).first().click();
+    await page.waitForTimeout(500);
+    const secondCard = page.locator('.object-card[data-kind="explicit"]').nth(1);
+    if ((await secondCard.locator('.card-body').count()) === 0) {
+      await secondCard.locator('.card-title-button').click();
+      await page.waitForTimeout(200);
+    }
+    await secondCard.locator('.expression-input').first().fill('1');
+    await page.waitForTimeout(700);
+    await addOption(page, '交点');
+    assert.equal(await page.locator('.intersection-card').count(), 2, 'curve intersection missing');
+
+    await addOption(page, '两点连线');
+    assert.equal(await page.locator('.marker-line-card').count(), 1, 'marker line missing');
+    assert((await page.locator('.marker-line-card').innerText()).includes('两点连线'));
+    await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-unified-intersection.png` });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('.intersection-card').count(), 2, 'intersections did not persist');
+    assert.equal(await page.locator('.marker-line-card').count(), 1, 'marker line did not persist');
+    assert.equal(
+      await page.locator('.marked-point-card').filter({ hasText: '交点' }).count(),
+      3,
+      'auto intersection markers did not persist',
+    );
+  } catch (error) {
+    recordError(error);
+  } finally {
+    await context.close();
+  }
+}
+
 async function runPointTools() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
@@ -554,6 +605,7 @@ const browser = await chromium.launch({
 try {
   await runDesktop();
   await runMobile();
+  await runUnifiedTools();
   await runPointTools();
   await runResilience();
 } finally {

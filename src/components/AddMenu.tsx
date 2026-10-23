@@ -7,7 +7,8 @@ export function AddMenu() {
   const mode = useAppStore((state) => state.mode);
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
-  const addTangentIntersection = useAppStore((state) => state.addTangentIntersection);
+  const addIntersection = useAppStore((state) => state.addIntersection);
+  const addMarkerLine = useAppStore((state) => state.addMarkerLine);
   const addTangentAngleConstraint = useAppStore(
     (state) => state.addTangentAngleConstraint,
   );
@@ -38,17 +39,22 @@ export function AddMenu() {
             action: () => addDivisionMark(),
           },
           {
+            label: '交点',
+            detail: '选择两个对象（含坐标轴）求交点与轨迹',
+            action: () => addIntersection(),
+          },
+          {
+            label: '两点连线',
+            detail: '连接两个标记点构造直线',
+            action: () => addMarkerLine(),
+          },
+          {
             label: autoMovePoints ? '暂停自动移动' : '自动移动标记点',
             detail: '让标记点沿所在曲线自动移动',
             action: () => {
               setAutoMovePoints(!autoMovePoints);
               setOpen(false);
             },
-          },
-          {
-            label: '切线交点',
-            detail: '标记两条切线的交点与轨迹',
-            action: () => addTangentIntersection(),
           },
           {
             label: '切线夹角约束',

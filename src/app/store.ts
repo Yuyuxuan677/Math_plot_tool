@@ -18,6 +18,7 @@ import type {
   IntersectionMark,
   LineShape,
   MarkedPoint,
+  MarkerLine,
   Mode,
   Orientation,
   ParametricItem,
@@ -29,8 +30,12 @@ import type {
   TangentIntersectionMark,
   Tool,
 } from './types';
-import { buildCurveRefs } from './curveRefs';
 import { buildTangentChoices } from './tangentRefs';
+import {
+  buildIntersectionObjects,
+  defaultIntersectionIds,
+  tangentObjectId,
+} from './intersectionRefs';
 import { nextMarkedPointName } from './markedPoints';
 import { loadPersistedState } from './persistence';
 import { clearExpressionCaches } from '../core/expression/analyze';
@@ -51,6 +56,7 @@ export interface AppState {
   tangentAngleConstraints: TangentAngleConstraint[];
   markedPoints: MarkedPoint[];
   divisionMarks: DivisionMark[];
+  markerLines: MarkerLine[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;
@@ -119,6 +125,14 @@ export interface AppState {
   addDivisionMark: () => string | null;
   updateDivisionMark: (id: string, patch: Partial<DivisionMark>) => void;
   removeDivisionMark: (id: string) => void;
+  addMarkerLine: () => string | null;
+  updateMarkerLine: (id: string, patch: Partial<MarkerLine>) => void;
+  removeMarkerLine: (id: string) => void;
+  syncIntersectionMarkers: (
+    markId: string,
+    kind: 'object' | 'tangent',
+    points: Point2[],
+  ) => void;
 
   addTangent: (ownerId: string) => void;
   removeTangent: (ownerId: string, tangentId: string) => void;
@@ -353,6 +367,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tangentAngleConstraints: persisted?.tangentAngleConstraints ?? [],
   markedPoints: initialPoints,
   divisionMarks: persisted?.divisionMarks ?? [],
+  markerLines: persisted?.markerLines ?? [],
   paramValues: persisted?.paramValues ?? initialParamValues(),
   view2dBoundingBox: persisted?.view2dBoundingBox ?? null,
   snapToGrid: persisted?.snapToGrid ?? true,
@@ -457,6 +472,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   removeObject: (id) =>
     set((state) => {
+      const removedIntersectionIds = new Set(
+        state.intersections
+          .filter((item) => item.id === id || item.aId === id || item.bId === id)
+          .map((item) => item.id),
+      );
+      const removedTangentIntersectionIds = new Set(
+        state.tangentIntersections
+          .filter((mark) => mark.a.ownerId === id || mark.b.ownerId === id)
+          .map((mark) => mark.id),
+      );
+      const removedMarkerIds = new Set(
+        state.markedPoints
+          .filter(
+            (point) =>
+              point.ownerId === id ||
+              (point.source === 'intersection' &&
+                point.intersectionMarkId &&
+                (removedIntersectionIds.has(point.intersectionMarkId) ||
+                  removedTangentIntersectionIds.has(point.intersectionMarkId))),
+          )
+          .map((point) => point.id),
+      );
       const next: Partial<AppState> = {
         items2d: state.items2d.filter((item) => item.id !== id),
         items3d: state.items3d.filter((item) => item.id !== id),
@@ -479,21 +516,34 @@ export const useAppStore = create<AppState>((set, get) => ({
             return item;
           }),
         intersections: state.intersections.filter(
-          (item) => item.id !== id && item.aId !== id && item.bId !== id,
+          (item) => !removedIntersectionIds.has(item.id),
         ),
         tangentIntersections: state.tangentIntersections.filter(
-          (mark) => mark.a.ownerId !== id && mark.b.ownerId !== id,
+          (mark) => !removedTangentIntersectionIds.has(mark.id),
         ),
         tangentAngleConstraints: state.tangentAngleConstraints.filter(
           (constraint) =>
             constraint.source.ownerId !== id && constraint.target.ownerId !== id,
         ),
-        markedPoints: state.markedPoints.filter((point) => point.ownerId !== id),
+        markedPoints: state.markedPoints.filter(
+          (point) => !removedMarkerIds.has(point.id),
+        ),
         divisionMarks: state.divisionMarks.filter((mark) => {
           const a = state.markedPoints.find((point) => point.id === mark.aId);
           const b = state.markedPoints.find((point) => point.id === mark.bId);
-          return !!a && !!b && a.ownerId !== id && b.ownerId !== id;
+          return (
+            !!a &&
+            !!b &&
+            !removedMarkerIds.has(mark.aId) &&
+            !removedMarkerIds.has(mark.bId) &&
+            a.ownerId !== id &&
+            b.ownerId !== id
+          );
         }),
+        markerLines: state.markerLines.filter(
+          (line) =>
+            !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
       };
       if (state.expandedId === id) next.expandedId = null;
       if (state.selectedId === id) next.selectedId = null;
@@ -665,15 +715,20 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addIntersection: () => {
     const state = get();
-    const refs = buildCurveRefs(state.items2d, state.geometry);
-    if (refs.length < 2) {
-      state.showToast('至少需要两条曲线或直线才能标记交点', 'error');
+    const objects = buildIntersectionObjects(
+      state.items2d,
+      state.markerLines,
+      state.markedPoints,
+    );
+    const ids = defaultIntersectionIds(objects);
+    if (!ids) {
+      state.showToast('请先添加至少一条曲线，或选择两条坐标轴', 'error');
       return null;
     }
     const mark: IntersectionMark = {
       id: uid('ix'),
-      aId: refs[0].id,
-      bId: refs[1].id,
+      aId: ids[0],
+      bId: ids[1],
       color: pickColor([
         ...state.items2d.map((item) => item.color),
         ...state.geometry.map((item) => item.color),
@@ -681,7 +736,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ]),
       visible: true,
       showCoordinates: true,
-      showTrace: false,
+      showTrace: true,
       traceClearToken: 0,
     };
     set({
@@ -704,8 +759,27 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   removeIntersection: (id) =>
     set((state) => {
+      const removedMarkerIds = new Set(
+        state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'intersection' &&
+              point.intersectionMarkId === id &&
+              (point.intersectionKind ?? 'object') === 'object',
+          )
+          .map((point) => point.id),
+      );
       const next: Partial<AppState> = {
         intersections: state.intersections.filter((item) => item.id !== id),
+        markedPoints: state.markedPoints.filter(
+          (point) => !removedMarkerIds.has(point.id),
+        ),
+        markerLines: state.markerLines.filter(
+          (line) => !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
+        divisionMarks: state.divisionMarks.filter(
+          (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
+        ),
       };
       if (state.expandedId === id) next.expandedId = null;
       if (state.selectedId === id) next.selectedId = null;
@@ -751,11 +825,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   removeTangentIntersection: (id) =>
-    set((state) => ({
-      tangentIntersections: state.tangentIntersections.filter((item) => item.id !== id),
-      expandedId: state.expandedId === id ? null : state.expandedId,
-      selectedId: state.selectedId === id ? null : state.selectedId,
-    })),
+    set((state) => {
+      const removedMarkerIds = new Set(
+        state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'intersection' &&
+              point.intersectionMarkId === id &&
+              point.intersectionKind === 'tangent',
+          )
+          .map((point) => point.id),
+      );
+      return {
+        tangentIntersections: state.tangentIntersections.filter((item) => item.id !== id),
+        markedPoints: state.markedPoints.filter(
+          (point) => !removedMarkerIds.has(point.id),
+        ),
+        markerLines: state.markerLines.filter(
+          (line) => !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
+        divisionMarks: state.divisionMarks.filter(
+          (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
+        ),
+        expandedId: state.expandedId === id ? null : state.expandedId,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+      };
+    }),
 
   addTangentAngleConstraint: () => {
     const state = get();
@@ -877,6 +972,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       divisionMarks: state.divisionMarks.filter(
         (mark) => mark.aId !== id && mark.bId !== id,
       ),
+      markerLines: state.markerLines.filter(
+        (line) => line.aId !== id && line.bId !== id,
+      ),
       expandedId: state.expandedId === id ? null : state.expandedId,
       selectedId: state.selectedId === id ? null : state.selectedId,
     })),
@@ -924,6 +1022,108 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedId: state.selectedId === id ? null : state.selectedId,
     })),
 
+  addMarkerLine: () => {
+    const state = get();
+    if (state.markedPoints.length < 2) {
+      state.showToast('至少需要两个标记点才能连线', 'error');
+      return null;
+    }
+    const line: MarkerLine = {
+      id: uid('line'),
+      aId: state.markedPoints[0].id,
+      bId: state.markedPoints[1].id,
+      color: pickColor([
+        ...state.items2d.map((item) => item.color),
+        ...state.markerLines.map((item) => item.color),
+      ]),
+      visible: true,
+    };
+    set({
+      markerLines: [...state.markerLines, line],
+      expandedId: line.id,
+      selectedId: line.id,
+      addMenuOpen: false,
+      sheetExpanded: false,
+    });
+    return line.id;
+  },
+
+  updateMarkerLine: (id, patch) =>
+    set((state) => ({
+      markerLines: state.markerLines.map((line) =>
+        line.id === id ? { ...line, ...patch } : line,
+      ),
+    })),
+
+  removeMarkerLine: (id) =>
+    set((state) => ({
+      markerLines: state.markerLines.filter((line) => line.id !== id),
+      expandedId: state.expandedId === id ? null : state.expandedId,
+      selectedId: state.selectedId === id ? null : state.selectedId,
+    })),
+
+  syncIntersectionMarkers: (markId, kind, points) => {
+    const state = get();
+    const existing = state.markedPoints.filter(
+      (point) =>
+        point.source === 'intersection' &&
+        point.intersectionMarkId === markId &&
+        (point.intersectionKind ?? 'object') === kind,
+    );
+    const maxPoints = Math.min(points.length, 8);
+    const unchanged =
+      existing.length === maxPoints &&
+      existing.every((marker, index) => {
+        const point = points[index];
+        return (
+          point &&
+          marker.intersectionIndex === index &&
+          Math.hypot(marker.point.x - point.x, marker.point.y - point.y) < 1e-5
+        );
+      });
+    if (unchanged) return;
+    const nextPoints = [...state.markedPoints];
+    for (let index = 0; index < maxPoints; index += 1) {
+      const point = points[index];
+      const marker = existing.find((item) => item.intersectionIndex === index);
+      if (marker) {
+        const markerIndex = nextPoints.findIndex((item) => item.id === marker.id);
+        if (markerIndex >= 0) {
+          nextPoints[markerIndex] = {
+            ...nextPoints[markerIndex],
+            point: { x: point.x, y: point.y },
+          };
+        }
+      } else {
+        nextPoints.push({
+          id: uid('pt'),
+          ownerId: '',
+          source: 'intersection',
+          intersectionMarkId: markId,
+          intersectionIndex: index,
+          intersectionKind: kind,
+          name: nextMarkedPointName(nextPoints),
+          point: { x: point.x, y: point.y },
+          visible: true,
+        });
+      }
+    }
+    const removedIds = new Set(
+      existing
+        .filter((marker) => (marker.intersectionIndex ?? 0) >= maxPoints)
+        .map((marker) => marker.id),
+    );
+    set({
+      markedPoints: nextPoints.filter((marker) => !removedIds.has(marker.id)),
+      markerLines: state.markerLines.filter(
+        (line) => !removedIds.has(line.aId) && !removedIds.has(line.bId),
+      ),
+      divisionMarks: state.divisionMarks.filter(
+        (mark) => !removedIds.has(mark.aId) && !removedIds.has(mark.bId),
+      ),
+    });
+  },
+
   addTangent: (ownerId) =>
     set((state) => {
       const tangent = { id: uid('tan'), point: null };
@@ -952,13 +1152,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const keep = (ref: { ownerId: string; tangentId: string }) =>
         !(ref.ownerId === ownerId && ref.tangentId === tangentId);
+      const tangentRef = tangentObjectId(ownerId, tangentId);
+      const removedTangentIntersectionIds = new Set(
+        state.tangentIntersections
+          .filter((mark) => !(keep(mark.a) && keep(mark.b)))
+          .map((mark) => mark.id),
+      );
+      const removedObjectIntersectionIds = new Set(
+        state.intersections
+          .filter((mark) => mark.aId === tangentRef || mark.bId === tangentRef)
+          .map((mark) => mark.id),
+      );
       const removedMarkerIds = new Set(
         state.markedPoints
           .filter(
             (point) =>
-              point.source === 'tangent' &&
-              point.tangentOwnerId === ownerId &&
-              point.tangentId === tangentId,
+              (point.source === 'tangent' &&
+                point.tangentOwnerId === ownerId &&
+                point.tangentId === tangentId) ||
+              (point.source === 'intersection' &&
+                point.intersectionMarkId &&
+                (removedTangentIntersectionIds.has(point.intersectionMarkId) ||
+                  removedObjectIntersectionIds.has(point.intersectionMarkId))),
           )
           .map((point) => point.id),
       );
@@ -974,7 +1189,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             : item,
         ),
         tangentIntersections: state.tangentIntersections.filter(
-          (mark) => keep(mark.a) && keep(mark.b),
+          (mark) => !removedTangentIntersectionIds.has(mark.id),
+        ),
+        intersections: state.intersections.filter(
+          (mark) => !removedObjectIntersectionIds.has(mark.id),
         ),
         tangentAngleConstraints: state.tangentAngleConstraints.filter(
           (constraint) => keep(constraint.source) && keep(constraint.target),
@@ -982,6 +1200,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         markedPoints: state.markedPoints.filter((point) => !removedMarkerIds.has(point.id)),
         divisionMarks: state.divisionMarks.filter(
           (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
+        ),
+        markerLines: state.markerLines.filter(
+          (line) => !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
         ),
       };
     }),
@@ -1052,6 +1273,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       tangentAngleConstraints: [],
       markedPoints: [],
       divisionMarks: [],
+      markerLines: [],
       paramValues: {},
       view2dBoundingBox: null,
       selectedId: null,

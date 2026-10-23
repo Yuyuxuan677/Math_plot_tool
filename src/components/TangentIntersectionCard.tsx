@@ -62,7 +62,7 @@ export function TangentIntersectionCard({ mark }: { mark: TangentIntersectionMar
           />
         </label>
         <button type="button" className="card-title-button" aria-expanded={expanded} onClick={toggleExpanded}>
-          <span className="card-kind">切线交点</span>
+          <span className="card-kind">交点</span>
           <span className="card-summary">
             {labelFor(aKey)} × {labelFor(bKey)}
           </span>

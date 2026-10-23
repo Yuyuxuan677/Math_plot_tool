@@ -7,6 +7,7 @@ import type {
   Item2D,
   Item3D,
   MarkedPoint,
+  MarkerLine,
   Orientation,
   ParametricSurfaceItem,
   PersistedState,
@@ -332,10 +333,31 @@ function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
   if (!point) return null;
   const name = /^[A-Za-z]\d*$/.test(value.name) ? value.name : 'A';
   const source =
-    value.source === 'tangent' ? 'tangent' : value.source === 'free' ? 'free' : 'manual';
+    value.source === 'tangent'
+      ? 'tangent'
+      : value.source === 'free'
+        ? 'free'
+        : value.source === 'intersection'
+          ? 'intersection'
+          : 'manual';
   const ownerId =
-    source === 'free' ? '' : typeof value.ownerId === 'string' ? value.ownerId : '';
-  if (source !== 'free' && !ownerId) return null;
+    source === 'free' || source === 'intersection'
+      ? ''
+      : typeof value.ownerId === 'string'
+        ? value.ownerId
+        : '';
+  if (source !== 'free' && source !== 'intersection' && !ownerId) return null;
+  const intersectionMarkId =
+    source === 'intersection' && typeof value.intersectionMarkId === 'string'
+      ? value.intersectionMarkId
+      : undefined;
+  if (
+    source === 'intersection' &&
+    (!intersectionMarkId ||
+      (value.intersectionKind !== 'object' && value.intersectionKind !== 'tangent'))
+  ) {
+    return null;
+  }
   const tangentOwnerId =
     source === 'tangent' && typeof value.tangentOwnerId === 'string'
       ? value.tangentOwnerId
@@ -351,6 +373,17 @@ function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
     source,
     tangentOwnerId,
     tangentId,
+    intersectionMarkId,
+    intersectionIndex:
+      source === 'intersection'
+        ? Math.max(0, Math.round(numberValue(value.intersectionIndex, 0)))
+        : undefined,
+    intersectionKind:
+      source === 'intersection'
+        ? value.intersectionKind === 'tangent'
+          ? 'tangent'
+          : 'object'
+        : undefined,
     name,
     point,
     visible: boolValue(value.visible, true),
@@ -382,6 +415,20 @@ function sanitizeDivisionMark(value: unknown): DivisionMark | null {
     visible: boolValue(value.visible, true),
     showTrace: boolValue(value.showTrace, false),
     traceClearToken: numberValue(value.traceClearToken, 0),
+  };
+}
+
+function sanitizeMarkerLine(value: unknown): MarkerLine | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  if (typeof value.aId !== 'string' || typeof value.bId !== 'string') return null;
+  if (!value.aId || !value.bId || value.aId === value.bId) return null;
+  const color = typeof value.color === 'string' && COLOR_RE.test(value.color) ? value.color : '#0f766e';
+  return {
+    id: value.id,
+    aId: value.aId,
+    bId: value.bId,
+    color,
+    visible: boolValue(value.visible, true),
   };
 }
 
@@ -427,16 +474,29 @@ export function loadPersistedState(): Partial<PersistedState> | null {
               knownTangentKeys.has(`${item.target.ownerId}:${item.target.tangentId}`),
           )
       : [];
-    const intersections: IntersectionMark[] = [];
+    const intersections: IntersectionMark[] = Array.isArray(parsed.intersections)
+      ? parsed.intersections
+          .map(sanitizeIntersection)
+          .filter((item): item is IntersectionMark => item !== null)
+      : [];
 
     const knownItemIds = new Set(items2d.map((item) => item.id));
+    const objectIntersectionIds = new Set(intersections.map((item) => item.id));
+    const tangentIntersectionIds = new Set(tangentIntersections.map((item) => item.id));
     const markedPoints = Array.isArray(parsed.markedPoints)
       ? parsed.markedPoints
           .map(sanitizeMarkedPoint)
           .filter(
             (item): item is MarkedPoint =>
               item !== null &&
-              (item.source === 'free' || knownItemIds.has(item.ownerId)) &&
+              (item.source === 'free' ||
+                (item.source === 'intersection'
+                  ? item.intersectionKind === 'tangent'
+                    ? !!item.intersectionMarkId &&
+                      tangentIntersectionIds.has(item.intersectionMarkId)
+                    : !!item.intersectionMarkId &&
+                      objectIntersectionIds.has(item.intersectionMarkId)
+                  : knownItemIds.has(item.ownerId))) &&
               (item.source !== 'tangent' ||
                 knownTangentKeys.has(`${item.tangentOwnerId}:${item.tangentId}`)),
           )
@@ -447,6 +507,16 @@ export function loadPersistedState(): Partial<PersistedState> | null {
           .map(sanitizeDivisionMark)
           .filter(
             (item): item is DivisionMark =>
+              item !== null &&
+              markedPointIds.has(item.aId) &&
+              markedPointIds.has(item.bId),
+          )
+      : [];
+    const markerLines = Array.isArray(parsed.markerLines)
+      ? parsed.markerLines
+          .map(sanitizeMarkerLine)
+          .filter(
+            (item): item is MarkerLine =>
               item !== null &&
               markedPointIds.has(item.aId) &&
               markedPointIds.has(item.bId),
@@ -480,6 +550,7 @@ export function loadPersistedState(): Partial<PersistedState> | null {
       tangentAngleConstraints,
       markedPoints,
       divisionMarks,
+      markerLines,
       paramValues,
       view2dBoundingBox: bbox,
       snapToGrid: boolValue(parsed.snapToGrid, true),

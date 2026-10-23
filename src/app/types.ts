@@ -209,11 +209,15 @@ export interface MarkedPoint {
   id: string;
   /** Expression curve that owns this point. */
   ownerId: string;
-  /** Manual point or the point of a tangent, or an off-curve free point. */
-  source?: 'manual' | 'tangent' | 'free';
+  /** Manual point, tangent point, free point or intersection point. */
+  source?: 'manual' | 'tangent' | 'free' | 'intersection';
   /** Present when source === 'tangent'. */
   tangentOwnerId?: string;
   tangentId?: string;
+  /** Present when source === 'intersection'. */
+  intersectionMarkId?: string;
+  intersectionIndex?: number;
+  intersectionKind?: 'object' | 'tangent';
   /** Auto-assigned display name such as A, B, C. */
   name: string;
   point: Point2;
@@ -236,6 +240,16 @@ export interface DivisionMark {
   visible: boolean;
   showTrace: boolean;
   traceClearToken: number;
+}
+
+export interface MarkerLine {
+  id: string;
+  /** First marked point. */
+  aId: string;
+  /** Second marked point. */
+  bId: string;
+  color: string;
+  visible: boolean;
 }
 
 export interface IntersectionMark {
@@ -266,6 +280,7 @@ export interface PersistedState {
   tangentAngleConstraints: TangentAngleConstraint[];
   markedPoints: MarkedPoint[];
   divisionMarks: DivisionMark[];
+  markerLines: MarkerLine[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;

@@ -20,10 +20,17 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
   const remove = useAppStore((state) => state.removeMarkedPoint);
   const owner = items2d.find((item) => item.id === marked.ownerId);
   const isFree = marked.source === 'free';
+  const isIntersection = marked.source === 'intersection';
   const canLockCoordinate = marked.source === 'manual' && !isFree;
   const lock = marked.coordinateLock;
   const toggleExpanded = () => setExpandedId(expanded ? null : marked.id);
-  const kind = isFree ? '自由点' : marked.source === 'tangent' ? '切点' : '标记点';
+  const kind = isFree
+    ? '自由点'
+    : isIntersection
+      ? '交点'
+      : marked.source === 'tangent'
+        ? '切点'
+        : '标记点';
 
   return (
     <article
@@ -42,7 +49,13 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
           </span>
           <span className="card-summary">
             （{formatNumber(marked.point.x)}, {formatNumber(marked.point.y)}） ·{' '}
-            {isFree ? '自由点，可手动输入坐标' : owner ? item2DLabel(owner) : '曲线已删除'}
+            {isFree
+              ? '自由点，可手动输入坐标'
+              : isIntersection
+                ? '由交点自动生成'
+                : owner
+                  ? item2DLabel(owner)
+                  : '曲线已删除'}
           </span>
         </button>
         <div className="card-actions">
@@ -54,7 +67,7 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
           >
             {marked.visible ? <IconEye size={17} /> : <IconEyeOff size={17} />}
           </button>
-          {marked.source !== 'tangent' && (
+          {marked.source !== 'tangent' && !isIntersection && (
             <button
               type="button"
               className="icon-button small-icon danger-icon"
@@ -79,9 +92,11 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
           <p className="setting-hint">
             {isFree
               ? `自由点 ${marked.name} 不依附曲线，可以直接拖动或手动输入固定坐标。`
-              : marked.source === 'tangent'
-                ? `由切线自动生成的切点 ${marked.name}；拖动切线切点改变位置。`
-                : `点 ${marked.name} 可在曲线上拖动；坐标为实时值。`}
+              : isIntersection
+                ? `交点 ${marked.name} 自动跟随两个对象移动，可用于连线或 N 等分点。`
+                : marked.source === 'tangent'
+                  ? `由切线自动生成的切点 ${marked.name}；拖动切线切点改变位置。`
+                  : `点 ${marked.name} 可在曲线上拖动；坐标为实时值。`}
           </p>
 
           {isFree ? (
@@ -107,6 +122,8 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
                 />
               </div>
             </>
+          ) : isIntersection ? (
+            <p className="setting-hint">交点位置由所选两个对象决定，不能单独拖动。</p>
           ) : (
             <>
               <div className="setting-row">

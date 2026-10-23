@@ -16,10 +16,12 @@ export function MobileSheet() {
   const mode = useAppStore((state) => state.mode);
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
+  const intersections = useAppStore((state) => state.intersections);
   const tangentIntersections = useAppStore((state) => state.tangentIntersections);
   const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const markerLines = useAppStore((state) => state.markerLines);
   const autoMovePoints = useAppStore((state) => state.autoMovePoints);
   const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
 
@@ -36,10 +38,12 @@ export function MobileSheet() {
   const count =
     mode === '2d'
       ? items2d.length +
+        intersections.length +
         tangentIntersections.length +
         tangentAngleConstraints.length +
         markedPoints.length +
-        divisionMarks.length
+        divisionMarks.length +
+        markerLines.length
       : items3d.length;
 
   const handleFocus = (event: React.FocusEvent<HTMLDivElement>) => {

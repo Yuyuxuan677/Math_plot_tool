@@ -3,6 +3,8 @@ import { useAppStore } from '../app/store';
 import { ExpressionCard } from './ExpressionCard';
 import { MarkedPointCard } from './MarkedPointCard';
 import { DivisionCard } from './DivisionCard';
+import { IntersectionCard } from './IntersectionCard';
+import { MarkerLineCard } from './MarkerLineCard';
 import { Item3DCard } from './Item3DCard';
 import { ParameterPanel } from './ParameterPanel';
 import { TangentAngleCard } from './TangentAngleCard';
@@ -13,10 +15,12 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
   const mode = useAppStore((state) => state.mode);
   const items2d = useAppStore((state) => state.items2d);
   const items3d = useAppStore((state) => state.items3d);
+  const intersections = useAppStore((state) => state.intersections);
   const tangentIntersections = useAppStore((state) => state.tangentIntersections);
   const tangentAngleConstraints = useAppStore((state) => state.tangentAngleConstraints);
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
+  const markerLines = useAppStore((state) => state.markerLines);
   const autoMovePoints = useAppStore((state) => state.autoMovePoints);
   const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
   const expandedId = useAppStore((state) => state.expandedId);
@@ -27,10 +31,12 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
   const count =
     objects.length +
     (mode === '2d'
-      ? tangentIntersections.length +
+      ? intersections.length +
+        tangentIntersections.length +
         tangentAngleConstraints.length +
         markedPoints.length +
-        divisionMarks.length
+        divisionMarks.length +
+        markerLines.length
       : 0);
 
   useEffect(() => {
@@ -145,13 +151,18 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
         </section>
       )}
 
-      {mode === '2d' && tangentIntersections.length > 0 && (
-        <section className="panel-section tangent-intersections-section" aria-label="切线交点">
+      {mode === '2d' && (intersections.length > 0 || tangentIntersections.length > 0) && (
+        <section className="panel-section tangent-intersections-section" aria-label="交点">
           <div className="section-heading">
-            <h3>切线交点</h3>
-            <span className="section-count">{tangentIntersections.length}</span>
+            <h3>交点</h3>
+            <span className="section-count">
+              {intersections.length + tangentIntersections.length}
+            </span>
           </div>
           <div className="object-list">
+            {intersections.map((mark) => (
+              <IntersectionCard key={mark.id} mark={mark} />
+            ))}
             {tangentIntersections.map((mark) => (
               <TangentIntersectionCard key={mark.id} mark={mark} />
             ))}
@@ -159,8 +170,23 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
         </section>
       )}
 
+      {mode === '2d' && markerLines.length > 0 && (
+        <section className="panel-section marker-lines-section" aria-label="两点连线">
+          <div className="section-heading">
+            <h3>连线</h3>
+            <span className="section-count">{markerLines.length}</span>
+          </div>
+          <div className="object-list">
+            {markerLines.map((line) => (
+              <MarkerLineCard key={line.id} line={line} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {compact && objects.length === 0 && (
         <p className="sheet-empty-hint">点上方“添加”新建表达式曲线。</p>
-      )}    </div>
+      )}
+</div>
   );
 }

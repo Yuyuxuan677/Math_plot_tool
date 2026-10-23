@@ -5,6 +5,7 @@ import type {
   IntersectionMark,
   Item2D,
   MarkedPoint,
+  MarkerLine,
   Point2,
   Tangent,
   TangentAngleConstraint,
@@ -35,6 +36,7 @@ export interface BoardSnapshot {
   tangentAngleConstraints: TangentAngleConstraint[];
   markedPoints: MarkedPoint[];
   divisionMarks: DivisionMark[];
+  markerLines: MarkerLine[];
   paramValues: Record<string, string>;
   snapToGrid: boolean;
 }
@@ -50,6 +52,11 @@ export interface BoardCallbacks {
   onGeometryAnchorChange: (geometryId: string, anchorKey: string, point: Point2) => void;
   onDriverPointChange: (geometryId: string, point: Point2) => void;
   onMarkedPointChange: (pointId: string, point: Point2) => void;
+  onIntersectionPoints: (
+    markId: string,
+    kind: 'object' | 'tangent',
+    points: Point2[],
+  ) => void;
   onBoardError: (message: string) => void;
 }
 
@@ -147,6 +154,13 @@ interface DivisionEntry {
   lastDivisions: number;
 }
 
+interface MarkerLineEntry {
+  id: string;
+  line: AnyElement;
+  pointA: AnyElement;
+  pointB: AnyElement;
+}
+
 const INITIAL_BBOX: BoundingBox = [-10, 10, 10, -10];
 
 function isFinitePoint(point: Point2 | null | undefined): point is Point2 {
@@ -168,6 +182,7 @@ export class Board2DController {
   private autoMoveTimer: number | null = null;
   private markedPointEntries = new Map<string, MarkedPointEntry>();
   private divisionEntries = new Map<string, DivisionEntry>();
+  private markerLineEntries = new Map<string, MarkerLineEntry>();
   private draggingPointIds = new Set<string>();
   private draggingTangentRefs = new Set<string>();
   private tangentConstraintStates = new Map<
@@ -175,6 +190,8 @@ export class Board2DController {
     { source: Point2; target: Point2; angleDeg: number }
   >();
   private lastConstraintTargetReport = new Map<string, number>();
+  private lastIntersectionMarkerReport = new Map<string, number>();
+  private lastIntersectionMarkerCount = new Map<string, number>();
   private driverTargets = new Map<string, AnyElement>();
   private state: BoardSnapshot = {
     items2d: [],
@@ -184,6 +201,7 @@ export class Board2DController {
     tangentAngleConstraints: [],
     markedPoints: [],
     divisionMarks: [],
+    markerLines: [],
     paramValues: {},
     snapToGrid: true,
   };
@@ -393,6 +411,7 @@ export class Board2DController {
     this.syncTangentAngleConstraints(snapshot);
     this.syncTangentIntersections(snapshot);
     this.syncMarkedPoints(snapshot);
+    this.syncMarkerLines(snapshot);
     this.syncDivisionMarks(snapshot);
 
     try {
@@ -576,6 +595,122 @@ export class Board2DController {
     this.intersectionEntries.delete(entry.mark.id);
   }
 
+  private reportIntersectionMarkers(
+    markId: string,
+    kind: 'object' | 'tangent',
+    points: Point2[],
+  ): void {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const last = this.lastIntersectionMarkerReport.get(markId);
+    const lastCount = this.lastIntersectionMarkerCount.get(markId);
+    const dragging =
+      this.draggingTangentRefs.size > 0 || this.draggingPointIds.size > 0;
+    if (dragging && points.length === lastCount) return;
+    if (points.length === lastCount && last !== undefined) {
+      if (now - last < 120) return;
+    }
+    this.lastIntersectionMarkerReport.set(markId, now);
+    this.lastIntersectionMarkerCount.set(markId, points.length);
+    this.callbacks.onIntersectionPoints(markId, kind, points);
+  }
+
+  private invalidateIntersectionMarkerReports(): void {
+    this.lastIntersectionMarkerReport.clear();
+    this.lastIntersectionMarkerCount.clear();
+  }
+
+  private lineCurveModel(
+    id: string,
+    color: string,
+    point: Point2,
+    slope: number,
+    bbox: BoundingBox,
+  ): CurveModel {
+    const vertical = !Number.isFinite(slope);
+    const m = vertical ? 0 : slope;
+    const b = vertical ? 0 : point.y - slope * point.x;
+    const xMin = Math.min(bbox[0], bbox[2]);
+    const xMax = Math.max(bbox[0], bbox[2]);
+    const yMin = Math.min(bbox[1], bbox[3]);
+    const yMax = Math.max(bbox[1], bbox[3]);
+    return {
+      id,
+      color,
+      line: vertical
+        ? { vertical: true, verticalX: point.x, m: Infinity, b: 0 }
+        : { vertical: false, verticalX: 0, m, b },
+      implicit: vertical
+        ? (x) => x - point.x
+        : (x, y) => y - (m * x + b),
+      segments: [
+        vertical
+          ? { fn: (t) => ({ x: point.x, y: t }), min: yMin, max: yMax }
+          : { fn: (t) => ({ x: t, y: m * t + b }), min: xMin, max: xMax },
+      ],
+    };
+  }
+
+  private buildObjectIntersectionModels(snapshot: BoardSnapshot): Map<string, CurveModel> {
+    const bbox = this.getBoundingBox();
+    const models = buildCurveModels(
+      snapshot.items2d,
+      snapshot.geometry,
+      this.numericParams,
+      bbox,
+    );
+    const xMin = Math.min(bbox[0], bbox[2]);
+    const xMax = Math.max(bbox[0], bbox[2]);
+    const yMin = Math.min(bbox[1], bbox[3]);
+    const yMax = Math.max(bbox[1], bbox[3]);
+
+    models.set('axis:x', {
+      id: 'axis:x',
+      color: '#64748b',
+      line: { vertical: false, verticalX: 0, m: 0, b: 0 },
+      implicit: (_x, y) => y,
+      segments: [{ fn: (t) => ({ x: t, y: 0 }), min: xMin, max: xMax }],
+    });
+    models.set('axis:y', {
+      id: 'axis:y',
+      color: '#64748b',
+      line: { vertical: true, verticalX: 0, m: Infinity, b: 0 },
+      implicit: (x) => x,
+      segments: [{ fn: (t) => ({ x: 0, y: t }), min: yMin, max: yMax }],
+    });
+
+    for (const item of snapshot.items2d) {
+      for (const tangent of item.tangents) {
+        const ref = { ownerId: item.id, tangentId: tangent.id };
+        const info = this.tangentLineInfo(ref);
+        if (!info) continue;
+        models.set(
+          `tan:${item.id}:${tangent.id}`,
+          this.lineCurveModel(
+            `tan:${item.id}:${tangent.id}`,
+            item.color,
+            { x: info.px, y: info.py },
+            info.slope,
+            bbox,
+          ),
+        );
+      }
+    }
+
+    for (const line of snapshot.markerLines) {
+      const a = snapshot.markedPoints.find((point) => point.id === line.aId);
+      const b = snapshot.markedPoints.find((point) => point.id === line.bId);
+      if (!a || !b) continue;
+      const dx = b.point.x - a.point.x;
+      const dy = b.point.y - a.point.y;
+      const slope = Math.abs(dx) < 1e-12 ? Infinity : dy / dx;
+      models.set(
+        `line:${line.id}`,
+        this.lineCurveModel(`line:${line.id}`, line.color, a.point, slope, bbox),
+      );
+    }
+    return models;
+  }
+
   private syncIntersections(snapshot: BoardSnapshot): void {
     if (snapshot.intersections.length === 0 && this.intersectionEntries.size === 0) return;
     const seen = new Set<string>();
@@ -598,16 +733,12 @@ export class Board2DController {
       entry.mark = mark;
 
       if (!models) {
-        models = buildCurveModels(
-          snapshot.items2d,
-          snapshot.geometry,
-          this.numericParams,
-          this.getBoundingBox(),
-        );
+        models = this.buildObjectIntersectionModels(snapshot);
       }
       const a = models.get(mark.aId);
       const b = models.get(mark.bId);
       const intersections = mark.visible && a && b ? computeIntersections(a, b) : [];
+      this.reportIntersectionMarkers(mark.id, 'object', intersections);
       const traceReset =
         entry.lastTraceClearToken !== mark.traceClearToken ||
         entry.lastShowTrace !== mark.showTrace;
@@ -1030,6 +1161,7 @@ export class Board2DController {
         }
       }
       entry.lastPoint = hit;
+      this.reportIntersectionMarkers(mark.id, 'tangent', hit ? [hit] : []);
     }
     for (const [id, entry] of this.tangentIntersectionEntries) {
       if (!seen.has(id)) this.destroyTangentIntersectionEntry(entry);
@@ -1380,10 +1512,83 @@ export class Board2DController {
     }
   }
 
+  private ensureIntersectionMarkedPointEntry(marked: MarkedPoint): MarkedPointEntry | null {
+    const existing = this.markedPointEntries.get(marked.id);
+    if (existing && existing.owned && existing.curve === null) return existing;
+    if (existing) this.destroyMarkedPointEntry(existing);
+    try {
+      const anchor = this.board.create('point', [marked.point.x, marked.point.y], {
+        visible: false,
+        fixed: true,
+        withLabel: false,
+        showInfobox: false,
+        layer: 8,
+      });
+      const label = this.board.create('text', [0, 0, marked.name], {
+        fontSize: 12,
+        strokeColor: '#be123c',
+        fixed: true,
+        highlight: false,
+        withLabel: false,
+        showInfobox: false,
+        layer: 12,
+      });
+      const entry: MarkedPointEntry = {
+        marked,
+        glider: anchor,
+        curve: null,
+        owned: true,
+        label,
+        direction: 1,
+        lastVisible: false,
+        lastName: '',
+        lastX: NaN,
+        lastY: NaN,
+        lastLabelReport: 0,
+      };
+      this.markedPointEntries.set(marked.id, entry);
+      return entry;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  }
+
   private syncMarkedPoints(snapshot: BoardSnapshot): void {
     const seen = new Set<string>();
     for (const marked of snapshot.markedPoints) {
       seen.add(marked.id);
+      if (marked.source === 'intersection') {
+        const entry = this.ensureIntersectionMarkedPointEntry(marked);
+        if (!entry) continue;
+        entry.marked = marked;
+        try {
+          const labelX = marked.point.x + 0.16;
+          const labelY = marked.point.y + 0.16;
+          if (
+            entry.lastVisible !== marked.visible ||
+            entry.lastName !== marked.name
+          ) {
+            entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+            entry.label?.setAttribute({ visible: marked.visible });
+            entry.label?.setText?.(marked.name);
+            entry.lastVisible = marked.visible;
+            entry.lastName = marked.name;
+          }
+          if (
+            Math.abs(labelX - entry.lastX) > 1e-4 ||
+            Math.abs(labelY - entry.lastY) > 1e-4
+          ) {
+            entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+            entry.label?.setPosition(JXG.COORDS_BY_USER, [labelX, labelY]);
+            entry.lastX = labelX;
+            entry.lastY = labelY;
+          }
+        } catch {
+          // ignore
+        }
+        continue;
+      }
       if (marked.source === 'free') {
         const entry = this.ensureFreeMarkedPointEntry(marked);
         if (!entry) continue;
@@ -1750,6 +1955,7 @@ export class Board2DController {
       if (
         !marked.visible ||
         marked.source === 'free' ||
+        marked.source === 'intersection' ||
         marked.coordinateLock ||
         !marked.autoMove ||
         this.draggingPointIds.has(marked.id)
@@ -1792,6 +1998,80 @@ export class Board2DController {
       }
     }
     this.requestTraceRedraw();
+  }
+
+  private syncMarkerLines(snapshot: BoardSnapshot): void {
+    if (snapshot.markerLines.length === 0 && this.markerLineEntries.size === 0) return;
+    const seen = new Set<string>();
+    for (const mark of snapshot.markerLines) {
+      seen.add(mark.id);
+      const a = this.markedPointEntries.get(mark.aId);
+      const b = this.markedPointEntries.get(mark.bId);
+      const aPoint = snapshot.markedPoints.find((point) => point.id === mark.aId);
+      const bPoint = snapshot.markedPoints.find((point) => point.id === mark.bId);
+      if ((!a && !aPoint) || (!b && !bPoint)) {
+        const existing = this.markerLineEntries.get(mark.id);
+        if (existing) this.destroyMarkerLineEntry(existing);
+        continue;
+      }
+      let entry = this.markerLineEntries.get(mark.id);
+      if (!entry) {
+        const pointA = this.board.create('point', [0, 0], {
+          visible: false,
+          fixed: true,
+          withLabel: false,
+          showInfobox: false,
+          layer: 8,
+        });
+        const pointB = this.board.create('point', [0, 0], {
+          visible: false,
+          fixed: true,
+          withLabel: false,
+          showInfobox: false,
+          layer: 8,
+        });
+        const line = this.board.create('line', [pointA, pointB], {
+          strokeColor: mark.color,
+          strokeWidth: 2,
+          highlight: false,
+          fixed: true,
+          withLabel: false,
+          layer: 8,
+        });
+        entry = { id: mark.id, line, pointA, pointB };
+        this.markerLineEntries.set(mark.id, entry);
+      }
+      const pa = a
+        ? { x: a.glider.X(), y: a.glider.Y() }
+        : { x: aPoint?.point.x ?? 0, y: aPoint?.point.y ?? 0 };
+      const pb = b
+        ? { x: b.glider.X(), y: b.glider.Y() }
+        : { x: bPoint?.point.x ?? 0, y: bPoint?.point.y ?? 0 };
+      try {
+        entry.pointA.setPosition(JXG.COORDS_BY_USER, [pa.x, pa.y]);
+        entry.pointB.setPosition(JXG.COORDS_BY_USER, [pb.x, pb.y]);
+        entry.line.setAttribute({
+          visible: mark.visible && (aPoint?.visible ?? true) && (bPoint?.visible ?? true),
+          strokeColor: mark.color,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    for (const [id, entry] of this.markerLineEntries) {
+      if (!seen.has(id)) this.destroyMarkerLineEntry(entry);
+    }
+  }
+
+  private destroyMarkerLineEntry(entry: MarkerLineEntry): void {
+    try {
+      this.board.removeObject(entry.line);
+      this.board.removeObject(entry.pointA);
+      this.board.removeObject(entry.pointB);
+    } catch {
+      // ignore
+    }
+    this.markerLineEntries.delete(entry.id);
   }
 
   private syncDivisionMarks(snapshot: BoardSnapshot): void {
@@ -2371,6 +2651,7 @@ export class Board2DController {
           }
           pushPoint();
           this.draggingTangentRefs.delete(`${entry.id}:${tangent.id}`);
+          this.invalidateIntersectionMarkerReports();
           window.setTimeout(() => this.reportConstraintCounterpart(entry.id, tangent.id), 60);
         });
         pushPoint();
@@ -3272,6 +3553,8 @@ export class Board2DController {
       this.tangentIntersectionEntries.clear();
       this.divisionEntries.forEach((entry) => this.destroyDivisionEntry(entry));
       this.divisionEntries.clear();
+      this.markerLineEntries.forEach((entry) => this.destroyMarkerLineEntry(entry));
+      this.markerLineEntries.clear();
       this.markedPointEntries.forEach((entry) => this.destroyMarkedPointEntry(entry));
       this.markedPointEntries.clear();
       const JXGAny = JXG as any;
