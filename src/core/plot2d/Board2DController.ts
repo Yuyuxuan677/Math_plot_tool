@@ -185,6 +185,7 @@ export class Board2DController {
   private markerLineEntries = new Map<string, MarkerLineEntry>();
   private draggingPointIds = new Set<string>();
   private draggingTangentRefs = new Set<string>();
+  private boardInteracting = false;
   private tangentConstraintStates = new Map<
     string,
     { source: Point2; target: Point2; angleDeg: number }
@@ -270,6 +271,13 @@ export class Board2DController {
           // ignore transient board state
         }
       }, 180);
+    });
+    this.board.on('down', () => {
+      this.boardInteracting = true;
+    });
+    this.board.on('up', () => {
+      this.boardInteracting = false;
+      this.invalidateIntersectionMarkerReports();
     });
 
     try {
@@ -524,6 +532,12 @@ export class Board2DController {
       if (!trace || trace.points.length < 2) continue;
       drawPath(trace.points, entry.mark.color, 2.4);
     }
+    for (const entry of this.intersectionEntries.values()) {
+      for (const trace of entry.traces) {
+        if (!trace || trace.points.length < 2) continue;
+        drawPath(trace.points, entry.mark.color, 2.2);
+      }
+    }
     for (const entry of this.divisionEntries.values()) {
       for (const trace of entry.traces) {
         if (!trace || trace.points.length < 2) continue;
@@ -571,6 +585,7 @@ export class Board2DController {
     trace.curve = null;
     trace.points = [];
     trace.last = null;
+    this.requestTraceRedraw();
   }
 
   private destroyIntersectionEntry(entry: IntersectionEntry): void {
@@ -604,7 +619,9 @@ export class Board2DController {
     const last = this.lastIntersectionMarkerReport.get(markId);
     const lastCount = this.lastIntersectionMarkerCount.get(markId);
     const dragging =
-      this.draggingTangentRefs.size > 0 || this.draggingPointIds.size > 0;
+      this.boardInteracting ||
+      this.draggingTangentRefs.size > 0 ||
+      this.draggingPointIds.size > 0;
     if (dragging && points.length === lastCount) return;
     if (points.length === lastCount && last !== undefined) {
       if (now - last < 120) return;
@@ -794,7 +811,7 @@ export class Board2DController {
                   trace.points.splice(0, trace.points.length - 600);
                 }
                 trace.last = { x: hit.x, y: hit.y };
-                this.rebuildIntersectionTrace(trace, mark.color);
+                this.requestTraceRedraw();
               }
             }
           } catch {

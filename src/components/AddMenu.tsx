@@ -7,7 +7,7 @@ export function AddMenu() {
   const mode = useAppStore((state) => state.mode);
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
-  const addIntersection = useAppStore((state) => state.addIntersection);
+  const addIntersection = useAppStore((state) => state.beginIntersection);
   const addMarkerLine = useAppStore((state) => state.addMarkerLine);
   const addTangentAngleConstraint = useAppStore(
     (state) => state.addTangentAngleConstraint,
@@ -40,7 +40,7 @@ export function AddMenu() {
           },
           {
             label: '交点',
-            detail: '选择两个对象（含坐标轴）求交点与轨迹',
+            detail: '先手动选择两个对象（含坐标轴）再创建',
             action: () => addIntersection(),
           },
           {

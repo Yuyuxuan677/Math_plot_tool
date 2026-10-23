@@ -7,6 +7,7 @@ import { AddMenu } from './components/AddMenu';
 import { Board2D } from './components/Board2D';
 import { EmptyState } from './components/EmptyState';
 import { HelpDialog } from './components/HelpDialog';
+import { IntersectionDialog } from './components/IntersectionDialog';
 import { MobileSheet } from './components/MobileSheet';
 import { ObjectsPanel } from './components/ObjectsPanel';
 import { Toast } from './components/Toast';
@@ -94,6 +95,7 @@ export default function App() {
       </div>
       {isMobile && <MobileSheet />}
       <AddMenu />
+      <IntersectionDialog />
       <HelpDialog />
     </div>
   );

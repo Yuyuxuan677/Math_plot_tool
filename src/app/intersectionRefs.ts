@@ -54,21 +54,3 @@ export function buildIntersectionObjects(
 
   return objects;
 }
-
-export function defaultIntersectionIds(objects: IntersectionObject[]): [string, string] | null {
-  const curves = objects.filter((object) => object.kind === 'curve');
-  if (curves.length >= 2) return [curves[0].id, curves[1].id];
-  if (curves.length === 1) {
-    const axis = objects.find((object) => object.kind === 'axis');
-    if (axis) return [curves[0].id, axis.id];
-  }
-  const nonAxis = objects.find(
-    (object) => object.kind === 'tangent' || object.kind === 'line',
-  );
-  if (nonAxis) {
-    const axis = objects.find((object) => object.kind === 'axis');
-    if (axis) return [nonAxis.id, axis.id];
-  }
-  if (objects.length >= 2) return [objects[0].id, objects[1].id];
-  return null;
-}

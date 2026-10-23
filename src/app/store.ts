@@ -33,7 +33,6 @@ import type {
 import { buildTangentChoices } from './tangentRefs';
 import {
   buildIntersectionObjects,
-  defaultIntersectionIds,
   tangentObjectId,
 } from './intersectionRefs';
 import { nextMarkedPointName } from './markedPoints';
@@ -65,6 +64,7 @@ export interface AppState {
 
   selectedId: string | null;
   expandedId: string | null;
+  intersectionDraft: { aId: string; bId: string } | null;
   activeTool: Tool;
   toolOrientation: Orientation;
   toolTrayOpen: boolean;
@@ -77,6 +77,9 @@ export interface AppState {
   setMode: (mode: Mode) => void;
   setSelectedId: (id: string | null) => void;
   setExpandedId: (id: string | null) => void;
+  beginIntersection: () => void;
+  setIntersectionDraft: (draft: { aId?: string; bId?: string } | null) => void;
+  cancelIntersection: () => void;
   setActiveTool: (tool: Tool) => void;
   setToolOrientation: (orientation: Orientation) => void;
   setToolTrayOpen: (open: boolean) => void;
@@ -107,7 +110,7 @@ export interface AppState {
   addParabola: (vertex: Point2, point: Point2) => string;
   addHyperbola: (center: Point2, corner: Point2, orientation: Orientation) => string;
   updateGeometry: (id: string, patch: Partial<Geometry>) => void;
-  addIntersection: () => string | null;
+  addIntersection: (aId: string, bId: string) => string | null;
   updateIntersection: (id: string, patch: Partial<IntersectionMark>) => void;
   removeIntersection: (id: string) => void;
 
@@ -376,6 +379,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectedId: null,
   expandedId: null,
+  intersectionDraft: null,
   activeTool: 'select',
   toolOrientation: 'horizontal',
   toolTrayOpen: false,
@@ -388,6 +392,33 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMode: (mode) => set({ mode, activeTool: 'select', toolTrayOpen: false }),
   setSelectedId: (selectedId) => set({ selectedId }),
   setExpandedId: (expandedId) => set({ expandedId, selectedId: expandedId }),
+  beginIntersection: () => {
+    const state = get();
+    const objects = buildIntersectionObjects(
+      state.items2d,
+      state.markerLines,
+      state.markedPoints,
+    );
+    if (objects.length < 2) {
+      state.showToast('至少需要两个对象才能构建交点', 'error');
+      return;
+    }
+    set({
+      intersectionDraft: { aId: '', bId: '' },
+      addMenuOpen: false,
+      sheetExpanded: false,
+    });
+  },
+  setIntersectionDraft: (draft) =>
+    set((state) => ({
+      intersectionDraft: draft
+        ? {
+            aId: draft.aId ?? state.intersectionDraft?.aId ?? '',
+            bId: draft.bId ?? state.intersectionDraft?.bId ?? '',
+          }
+        : null,
+    })),
+  cancelIntersection: () => set({ intersectionDraft: null }),
   setActiveTool: (activeTool) => set({ activeTool }),
   setToolOrientation: (toolOrientation) => set({ toolOrientation }),
   setToolTrayOpen: (toolTrayOpen) => set({ toolTrayOpen }),
@@ -713,22 +744,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { geometry: applyLineAngleConstraints(geometry) };
     }),
 
-  addIntersection: () => {
+  addIntersection: (aId, bId) => {
     const state = get();
     const objects = buildIntersectionObjects(
       state.items2d,
       state.markerLines,
       state.markedPoints,
     );
-    const ids = defaultIntersectionIds(objects);
-    if (!ids) {
-      state.showToast('请先添加至少一条曲线，或选择两条坐标轴', 'error');
+    const aExists = objects.some((object) => object.id === aId);
+    const bExists = objects.some((object) => object.id === bId);
+    if (!aId || !bId || aId === bId || !aExists || !bExists) {
+      state.showToast('请选择两个不同的对象', 'error');
       return null;
     }
     const mark: IntersectionMark = {
       id: uid('ix'),
-      aId: ids[0],
-      bId: ids[1],
+      aId,
+      bId,
       color: pickColor([
         ...state.items2d.map((item) => item.color),
         ...state.geometry.map((item) => item.color),
@@ -743,6 +775,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       intersections: [...state.intersections, mark],
       expandedId: mark.id,
       selectedId: mark.id,
+      intersectionDraft: null,
       addMenuOpen: false,
       sheetExpanded: false,
       mode: '2d',
@@ -1278,6 +1311,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       view2dBoundingBox: null,
       selectedId: null,
       expandedId: null,
+      intersectionDraft: null,
       activeTool: 'select',
       toolTrayOpen: false,
       autoMovePoints: false,

@@ -53,6 +53,18 @@ async function addOption(page, text) {
   await page.waitForTimeout(750);
 }
 
+async function createIntersection(page, aLabel, bLabel) {
+  await addOption(page, '交点');
+  await page
+    .locator('select[aria-label="选择第一个对象"]')
+    .selectOption({ label: aLabel });
+  await page
+    .locator('select[aria-label="选择第二个对象"]')
+    .selectOption({ label: bLabel });
+  await page.getByRole('button', { name: '创建交点' }).click();
+  await page.waitForTimeout(750);
+}
+
 async function expandCard(page, selector) {
   const card = page.locator(selector).first();
   if ((await card.locator('.card-body').count()) === 0) {
@@ -461,7 +473,7 @@ async function runUnifiedTools() {
     await page.getByRole('button', { name: /y = x²/ }).click();
     await page.waitForTimeout(400);
 
-    await addOption(page, '交点');
+    await createIntersection(page, '函数 y = x^2', 'x 轴');
     assert.equal(await page.locator('.intersection-card').count(), 1, 'axis intersection missing');
     assert(
       (await page.locator('.marked-point-card').first().innerText()).includes('交点 A'),
@@ -479,7 +491,7 @@ async function runUnifiedTools() {
     }
     await secondCard.locator('.expression-input').first().fill('1');
     await page.waitForTimeout(700);
-    await addOption(page, '交点');
+    await createIntersection(page, '函数 y = x^2', '函数 y = 1');
     assert.equal(await page.locator('.intersection-card').count(), 2, 'curve intersection missing');
 
     await addOption(page, '两点连线');

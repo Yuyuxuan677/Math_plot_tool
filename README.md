@@ -14,6 +14,7 @@
 
 ![手机端函数图](artifacts/e2e/mobile-2d-edit.png)
 ![标记点与 N 等分点](artifacts/e2e/desktop-2d-marked-points.png)
+![创建交点前手动选择两个对象](artifacts/e2e/desktop-2d-intersection-dialog.png)
 ![通用交点与两点连线](artifacts/e2e/desktop-2d-unified-intersection.png)
 ![垂直切线交点轨迹](artifacts/e2e/desktop-2d-monge-trace.png)
 ![3D 曲面](artifacts/e2e/mobile-3d.png)
@@ -75,7 +76,8 @@ npm run preview
 
 ### 通用交点与两点连线
 
-- “添加 → 交点”创建后，在卡片中任选两个对象：曲线、切线、已有连线或 x/y 坐标轴
+- “添加 → 交点”会先弹出选择框，手动选择两个对象后再创建；之后也可以在该交点卡片中重新选择
+- 可选对象：曲线、切线、已有连线或 x/y 坐标轴
 - 两个对象的所有实际交点都会显示，并自动注册为标记点（显示为“交点 A/B/…”）
 - 交点标记点可直接用于“两点连线”、N 等分点和后续交点计算
 - “记录交点轨迹”开启后，对象移动时会留下交点轨迹
