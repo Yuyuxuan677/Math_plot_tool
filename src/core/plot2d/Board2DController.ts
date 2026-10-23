@@ -784,15 +784,15 @@ export class Board2DController {
     }
 
     for (const line of snapshot.markerLines) {
-      const a = snapshot.markedPoints.find((point) => point.id === line.aId);
-      const b = snapshot.markedPoints.find((point) => point.id === line.bId);
+      const a = this.liveMarkedPoint(line.aId, snapshot);
+      const b = this.liveMarkedPoint(line.bId, snapshot);
       if (!a || !b) continue;
-      const dx = b.point.x - a.point.x;
-      const dy = b.point.y - a.point.y;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
       const slope = Math.abs(dx) < 1e-12 ? Infinity : dy / dx;
       models.set(
         `line:${line.id}`,
-        this.lineCurveModel(`line:${line.id}`, line.color, a.point, slope, bbox),
+        this.lineCurveModel(`line:${line.id}`, line.color, a, slope, bbox),
       );
     }
     return models;
@@ -2088,16 +2088,41 @@ export class Board2DController {
     this.requestTraceRedraw();
   }
 
+  private liveMarkedPoint(id: string, snapshot: BoardSnapshot): Point2 | null {
+    const marked = snapshot.markedPoints.find((point) => point.id === id);
+    if (!marked) return null;
+    if (marked.source === 'intersection' && marked.intersectionMarkId) {
+      if (marked.intersectionKind === 'tangent') {
+        const entry = this.tangentIntersectionEntries.get(marked.intersectionMarkId);
+        if (entry?.point?.visProp?.visible) {
+          return { x: entry.point.X(), y: entry.point.Y() };
+        }
+      } else {
+        const entry = this.intersectionEntries.get(marked.intersectionMarkId);
+        const point = entry?.points[marked.intersectionIndex ?? 0];
+        if (point?.visProp?.visible) return { x: point.X(), y: point.Y() };
+      }
+      return null;
+    }
+    const entry = this.markedPointEntries.get(id);
+    if (entry) {
+      try {
+        return { x: entry.glider.X(), y: entry.glider.Y() };
+      } catch {
+        return marked.point;
+      }
+    }
+    return marked.point;
+  }
+
   private syncMarkerLines(snapshot: BoardSnapshot): void {
     if (snapshot.markerLines.length === 0 && this.markerLineEntries.size === 0) return;
     const seen = new Set<string>();
     for (const mark of snapshot.markerLines) {
       seen.add(mark.id);
-      const a = this.markedPointEntries.get(mark.aId);
-      const b = this.markedPointEntries.get(mark.bId);
-      const aPoint = snapshot.markedPoints.find((point) => point.id === mark.aId);
-      const bPoint = snapshot.markedPoints.find((point) => point.id === mark.bId);
-      if ((!a && !aPoint) || (!b && !bPoint)) {
+      const aMarked = snapshot.markedPoints.find((point) => point.id === mark.aId);
+      const bMarked = snapshot.markedPoints.find((point) => point.id === mark.bId);
+      if (!aMarked || !bMarked) {
         const existing = this.markerLineEntries.get(mark.id);
         if (existing) this.destroyMarkerLineEntry(existing);
         continue;
@@ -2129,17 +2154,17 @@ export class Board2DController {
         entry = { id: mark.id, line, pointA, pointB };
         this.markerLineEntries.set(mark.id, entry);
       }
-      const pa = a
-        ? { x: a.glider.X(), y: a.glider.Y() }
-        : { x: aPoint?.point.x ?? 0, y: aPoint?.point.y ?? 0 };
-      const pb = b
-        ? { x: b.glider.X(), y: b.glider.Y() }
-        : { x: bPoint?.point.x ?? 0, y: bPoint?.point.y ?? 0 };
+      const pa = this.liveMarkedPoint(mark.aId, snapshot);
+      const pb = this.liveMarkedPoint(mark.bId, snapshot);
       try {
+        if (!pa || !pb) {
+          entry.line.setAttribute({ visible: false });
+          continue;
+        }
         entry.pointA.setPosition(JXG.COORDS_BY_USER, [pa.x, pa.y]);
         entry.pointB.setPosition(JXG.COORDS_BY_USER, [pb.x, pb.y]);
         entry.line.setAttribute({
-          visible: mark.visible && (aPoint?.visible ?? true) && (bPoint?.visible ?? true),
+          visible: mark.visible && aMarked.visible && bMarked.visible,
           strokeColor: mark.color,
         });
       } catch {

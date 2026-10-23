@@ -794,7 +794,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.intersections.map((item) => item.color),
       ]),
       visible: true,
-      showCoordinates: true,
+      showCoordinates: false,
       showTrace: false,
       traceClearToken: 0,
     };
@@ -862,7 +862,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...state.tangentIntersections.map((item) => item.color),
       ]),
       visible: true,
-      showCoordinates: true,
+      showCoordinates: false,
       showTrace: false,
       traceClearToken: 0,
     };
@@ -950,7 +950,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               ...state.tangentIntersections.map((item) => item.color),
             ]),
             visible: true,
-            showCoordinates: true,
+            showCoordinates: false,
             showTrace: true,
             traceClearToken: 0,
           },
@@ -1134,30 +1134,34 @@ export const useAppStore = create<AppState>((set, get) => ({
         (point.intersectionKind ?? 'object') === kind,
     );
     const maxPoints = Math.min(points.length, 8);
-    const unchanged =
-      existing.length === maxPoints &&
-      existing.every((marker, index) => {
-        const point = points[index];
-        return (
-          point &&
-          marker.intersectionIndex === index &&
-          Math.hypot(marker.point.x - point.x, marker.point.y - point.y) < 1e-5
-        );
-      });
-    if (unchanged) return;
     const nextPoints = [...state.markedPoints];
+    const removedIds = new Set<string>();
+    let changed = false;
     for (let index = 0; index < maxPoints; index += 1) {
       const point = points[index];
       const marker = existing.find((item) => item.intersectionIndex === index);
       if (marker) {
         const markerIndex = nextPoints.findIndex((item) => item.id === marker.id);
-        if (markerIndex >= 0) {
+        if (
+          markerIndex >= 0 &&
+          Math.hypot(
+            nextPoints[markerIndex].point.x - point.x,
+            nextPoints[markerIndex].point.y - point.y,
+          ) > 1e-5
+        ) {
           nextPoints[markerIndex] = {
             ...nextPoints[markerIndex],
             point: { x: point.x, y: point.y },
           };
+          changed = true;
         }
       } else {
+        const coincident = nextPoints.find(
+          (item) =>
+            !removedIds.has(item.id) &&
+            Math.hypot(item.point.x - point.x, item.point.y - point.y) < 2e-2,
+        );
+        if (coincident) continue;
         nextPoints.push({
           id: uid('pt'),
           ownerId: '',
@@ -1169,21 +1173,55 @@ export const useAppStore = create<AppState>((set, get) => ({
           point: { x: point.x, y: point.y },
           visible: true,
         });
+        changed = true;
       }
     }
-    const removedIds = new Set(
-      existing
-        .filter((marker) => (marker.intersectionIndex ?? 0) >= maxPoints)
-        .map((marker) => marker.id),
-    );
+    for (const marker of existing) {
+      if ((marker.intersectionIndex ?? 0) >= maxPoints) removedIds.add(marker.id);
+    }
+    // Keep only the first point when different intersections produce the same
+    // coordinates. Later duplicates are remapped for existing lines/divisions.
+    const kept: MarkedPoint[] = [];
+    const aliases = new Map<string, string>();
+    for (const point of nextPoints) {
+      if (removedIds.has(point.id)) continue;
+      if (point.source === 'intersection') {
+        const first = kept.find(
+          (candidate) =>
+            Math.hypot(
+              candidate.point.x - point.point.x,
+              candidate.point.y - point.point.y,
+            ) < 2e-2,
+        );
+        if (first) {
+          aliases.set(point.id, first.id);
+          removedIds.add(point.id);
+          changed = true;
+          continue;
+        }
+      }
+      kept.push(point);
+    }
+    if (!changed && removedIds.size === 0) return;
+    const remap = (id: string) => aliases.get(id) ?? id;
     set({
-      markedPoints: nextPoints.filter((marker) => !removedIds.has(marker.id)),
-      markerLines: state.markerLines.filter(
-        (line) => !removedIds.has(line.aId) && !removedIds.has(line.bId),
-      ),
-      divisionMarks: state.divisionMarks.filter(
-        (mark) => !removedIds.has(mark.aId) && !removedIds.has(mark.bId),
-      ),
+      markedPoints: kept,
+      markerLines: state.markerLines
+        .map((line) => ({ ...line, aId: remap(line.aId), bId: remap(line.bId) }))
+        .filter(
+          (line) =>
+            line.aId !== line.bId &&
+            !removedIds.has(line.aId) &&
+            !removedIds.has(line.bId),
+        ),
+      divisionMarks: state.divisionMarks
+        .map((mark) => ({ ...mark, aId: remap(mark.aId), bId: remap(mark.bId) }))
+        .filter(
+          (mark) =>
+            mark.aId !== mark.bId &&
+            !removedIds.has(mark.aId) &&
+            !removedIds.has(mark.bId),
+        ),
     });
   },
 

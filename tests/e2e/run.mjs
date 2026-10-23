@@ -55,20 +55,22 @@ async function addOption(page, text) {
 
 async function createIntersection(page, aLabel, bLabel) {
   await addOption(page, '交点');
-  await page
+  const dialog = page.locator('.intersection-dialog');
+  await dialog
     .locator('select[aria-label="选择第一个对象"]')
     .selectOption({ label: aLabel });
-  await page
+  await dialog
     .locator('select[aria-label="选择第二个对象"]')
     .selectOption({ label: bLabel });
-  await page.getByRole('button', { name: '创建交点' }).click();
+  await dialog.getByRole('button', { name: '创建交点' }).click();
   await page.waitForTimeout(750);
 }
 
 async function createMarkerLine(page, aName, bName) {
   await addOption(page, '两点连线');
+  const dialog = page.locator('.marker-line-dialog');
   const pick = async (label, name) => {
-    const select = page.locator(`select[aria-label="${label}"]`);
+    const select = dialog.locator(`select[aria-label="${label}"]`);
     const value = await select.locator('option').evaluateAll(
       (options, pointName) =>
         options.find((option) => (option.textContent ?? '').startsWith(`${pointName}（`))
@@ -80,7 +82,7 @@ async function createMarkerLine(page, aName, bName) {
   };
   await pick('选择连线起点', aName);
   await pick('选择连线终点', bName);
-  await page.getByRole('button', { name: '创建连线' }).click();
+  await dialog.getByRole('button', { name: '创建连线' }).click();
   await page.waitForTimeout(750);
 }
 
@@ -256,8 +258,8 @@ async function runDesktop() {
     );
     const coordinateLabels = await page.locator('.jxgbox .JXGtext').allTextContents();
     assert(
-      coordinateLabels.some((text) => /^\(.*,.*\)$/.test(text.trim())),
-      'tangent intersection coordinates were not drawn',
+      !coordinateLabels.some((text) => /^\(.*,.*\)$/.test(text.trim())),
+      'intersection coordinates should be hidden by default',
     );
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-tangent-features.png` });
 
@@ -266,6 +268,13 @@ async function runDesktop() {
       await tangentCard.locator('.card-title-button').click();
       await page.waitForTimeout(250);
     }
+    await tangentCard.getByRole('switch', { name: '显示交点坐标' }).click();
+    await page.waitForTimeout(350);
+    const shownCoordinateLabels = await page.locator('.jxgbox .JXGtext').allTextContents();
+    assert(
+      shownCoordinateLabels.some((text) => /^\(.*,.*\)$/.test(text.trim())),
+      'intersection coordinates were not shown after enabling',
+    );
     const traceSwitch = tangentCard.getByRole('switch', { name: '记录切线交点轨迹' });
     assert(await traceSwitch.isChecked(), 'auto tangent trace should be enabled');
     await tangentCard.getByRole('button', { name: '推导交点轨迹方程' }).click();
@@ -552,6 +561,36 @@ async function runUnifiedTools() {
   }
 }
 
+async function runCoincidentPoints() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await context.newPage();
+  attachWatch(page, 'coincident-points');
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: /y = x²/ }).click();
+    await page.waitForTimeout(400);
+    await createIntersection(page, '函数 y = x^2', 'x 轴');
+    await createIntersection(page, '函数 y = x^2', 'x 轴');
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('.intersection-card').count(), 2, 'duplicate intersections missing');
+    assert.equal(
+      await page.locator('.marked-point-card').count(),
+      1,
+      'coincident intersection points were not deduplicated',
+    );
+    const labels = await page.locator('.jxgbox .JXGtext').allTextContents();
+    assert(
+      !labels.some((text) => /^\(.*,.*\)$/.test(text.trim())),
+      'intersection coordinates should default to hidden',
+    );
+  } catch (error) {
+    recordError(error);
+  } finally {
+    await context.close();
+  }
+}
+
 async function runPointTools() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
@@ -656,6 +695,7 @@ try {
   await runDesktop();
   await runMobile();
   await runUnifiedTools();
+  await runCoincidentPoints();
   await runPointTools();
   await runResilience();
 } finally {
