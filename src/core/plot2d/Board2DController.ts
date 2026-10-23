@@ -110,6 +110,10 @@ interface IntersectionEntry {
   traces: Array<IntersectionTrace | null>;
   lastTraceClearToken: number;
   lastShowTrace: boolean;
+  lastHits: Array<Point2 | null>;
+  lastLabelPositions: Array<Point2 | null>;
+  lastLabelTexts: string[];
+  lastColor: string;
 }
 
 interface TangentIntersectionEntry {
@@ -744,6 +748,10 @@ export class Board2DController {
           traces: [],
           lastTraceClearToken: mark.traceClearToken,
           lastShowTrace: mark.showTrace,
+          lastHits: [],
+          lastLabelPositions: [],
+          lastLabelTexts: [],
+          lastColor: '',
         };
         this.intersectionEntries.set(mark.id, entry);
       }
@@ -772,25 +780,58 @@ export class Board2DController {
 
         if (hit) {
           try {
-            point.setAttribute({
-              visible: mark.visible,
-              fillColor: mark.color,
-              strokeColor: '#ffffff',
-            });
-            point.setPosition(JXG.COORDS_BY_USER, [hit.x, hit.y]);
-            label.setAttribute({
-              visible: mark.visible && mark.showCoordinates,
-              strokeColor: mark.color,
-            });
-            label.setText(`(${formatNumber(hit.x)}, ${formatNumber(hit.y)})`);
-            label.setPosition(JXG.COORDS_BY_USER, [hit.x + 0.22, hit.y + 0.22]);
+            const pointVisible = !!point.visProp?.visible;
+            const labelVisible = !!label.visProp?.visible;
+            const colorChanged = entry.lastColor !== mark.color;
+            if (!pointVisible) {
+              point.setAttribute({
+                visible: true,
+                fillColor: mark.color,
+                strokeColor: '#ffffff',
+              });
+            } else if (colorChanged) {
+              point.setAttribute({ fillColor: mark.color });
+            }
+            const previousPoint = entry.lastHits[index];
+            if (
+              !previousPoint ||
+              Math.abs(previousPoint.x - hit.x) > 1e-4 ||
+              Math.abs(previousPoint.y - hit.y) > 1e-4
+            ) {
+              point.setPosition(JXG.COORDS_BY_USER, [hit.x, hit.y]);
+              entry.lastHits[index] = { x: hit.x, y: hit.y };
+            }
+            const shouldShowLabel = mark.visible && mark.showCoordinates;
+            if (labelVisible !== shouldShowLabel || colorChanged) {
+              label.setAttribute({
+                visible: shouldShowLabel,
+                strokeColor: mark.color,
+              });
+            }
+            const text = `(${formatNumber(hit.x)}, ${formatNumber(hit.y)})`;
+            if (entry.lastLabelTexts[index] !== text) {
+              label.setText(text);
+              entry.lastLabelTexts[index] = text;
+            }
+            const labelPosition = { x: hit.x + 0.22, y: hit.y + 0.22 };
+            const previousLabel = entry.lastLabelPositions[index];
+            if (
+              !previousLabel ||
+              Math.abs(previousLabel.x - labelPosition.x) > 1e-4 ||
+              Math.abs(previousLabel.y - labelPosition.y) > 1e-4
+            ) {
+              label.setPosition(JXG.COORDS_BY_USER, [labelPosition.x, labelPosition.y]);
+              entry.lastLabelPositions[index] = labelPosition;
+            }
           } catch {
             // ignore transient point errors
           }
         } else {
           try {
-            point.setAttribute({ visible: false });
-            label.setAttribute({ visible: false });
+            if (point.visProp?.visible) point.setAttribute({ visible: false });
+            if (label.visProp?.visible) label.setAttribute({ visible: false });
+            entry.lastHits[index] = null;
+            entry.lastLabelPositions[index] = null;
           } catch {
             // ignore
           }
@@ -826,6 +867,7 @@ export class Board2DController {
           }
         }
       }
+      entry.lastColor = mark.color;
     }
 
     for (const [id, entry] of this.intersectionEntries) {
