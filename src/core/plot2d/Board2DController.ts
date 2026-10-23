@@ -184,6 +184,7 @@ export class Board2DController {
   private traceContext: CanvasRenderingContext2D | null = null;
   private traceFrame: number | null = null;
   private autoMoveTimer: number | null = null;
+  private viewRestoreTimer: number | null = null;
   private markedPointEntries = new Map<string, MarkedPointEntry>();
   private divisionEntries = new Map<string, DivisionEntry>();
   private markerLineEntries = new Map<string, MarkerLineEntry>();
@@ -263,6 +264,14 @@ export class Board2DController {
 
     this.board.on('boundingbox', () => {
       if (this.disposed) return;
+      // JSXGraph gliders can be re-projected while the view changes. Restore
+      // marked points from their stored world coordinates so zooming or
+      // panning never changes which point is marked.
+      if (this.viewRestoreTimer !== null) window.clearTimeout(this.viewRestoreTimer);
+      this.viewRestoreTimer = window.setTimeout(() => {
+        this.viewRestoreTimer = null;
+        this.restoreMarkedPointsFromView();
+      }, 0);
       this.requestTraceRedraw();
       if (this.viewTimer) window.clearTimeout(this.viewTimer);
       this.viewTimer = window.setTimeout(() => {
@@ -606,6 +615,69 @@ export class Board2DController {
       this.clearIntersectionTrace(trace);
     }
     this.intersectionEntries.delete(entry.mark.id);
+  }
+
+  private restoreMarkedPointsFromView(): void {
+    if (
+      this.disposed ||
+      this.draggingPointIds.size > 0 ||
+      this.draggingTangentRefs.size > 0
+    ) {
+      return;
+    }
+    let changed = false;
+    for (const marked of this.state.markedPoints) {
+      const entry = this.markedPointEntries.get(marked.id);
+      if (!entry) continue;
+      try {
+        if (marked.source === 'tangent' && marked.tangentOwnerId && marked.tangentId) {
+          const owner = this.entries.get(marked.tangentOwnerId);
+          const tangent = owner?.tangents.get(marked.tangentId);
+          const item = this.state.items2d.find((candidate) => candidate.id === marked.ownerId);
+          const stored = item?.tangents.find((candidate) => candidate.id === marked.tangentId);
+          if (!tangent || !stored?.point) continue;
+          if (
+            Math.abs(tangent.glider.X() - stored.point.x) > 1e-6 ||
+            Math.abs(tangent.glider.Y() - stored.point.y) > 1e-6
+          ) {
+            tangent.glider.setPosition(JXG.COORDS_BY_USER, [
+              stored.point.x,
+              stored.point.y,
+            ]);
+            if (owner) this.updateImplicitTangentLine(owner, tangent);
+            changed = true;
+          }
+        } else if (
+          marked.source === 'manual' ||
+          marked.source === 'free' ||
+          marked.source === 'intersection'
+        ) {
+          if (
+            Math.abs(entry.glider.X() - marked.point.x) > 1e-6 ||
+            Math.abs(entry.glider.Y() - marked.point.y) > 1e-6
+          ) {
+            entry.glider.setPosition(JXG.COORDS_BY_USER, [
+              marked.point.x,
+              marked.point.y,
+            ]);
+            changed = true;
+          }
+        }
+      } catch {
+        // ignore transient glider errors during view changes
+      }
+    }
+    if (!changed) return;
+    try {
+      this.syncMarkedPoints(this.state);
+      this.syncTangentIntersections(this.state);
+      this.syncIntersections(this.state);
+      this.syncMarkerLines(this.state);
+      this.syncDivisionMarks(this.state);
+      this.board.update();
+    } catch {
+      // ignore transient board updates
+    }
   }
 
   private reportIntersectionMarkers(
