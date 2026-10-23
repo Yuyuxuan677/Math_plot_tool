@@ -1,6 +1,8 @@
 import { useAppStore } from '../app/store';
 import type { MarkedPoint } from '../app/types';
 import { item2DLabel } from '../app/curveRefs';
+import { buildIntersectionObjects } from '../app/intersectionRefs';
+import { buildTangentChoices } from '../app/tangentRefs';
 import { formatNumber } from '../app/utils';
 import {
   IconChevronDown,
@@ -15,7 +17,12 @@ import { Switch } from './Switch';
 export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
   const expanded = useAppStore((state) => state.expandedId === marked.id);
   const setExpandedId = useAppStore((state) => state.setExpandedId);
+  const setSelectedId = useAppStore((state) => state.setSelectedId);
   const items2d = useAppStore((state) => state.items2d);
+  const intersections = useAppStore((state) => state.intersections);
+  const tangentIntersections = useAppStore((state) => state.tangentIntersections);
+  const markerLines = useAppStore((state) => state.markerLines);
+  const markedPoints = useAppStore((state) => state.markedPoints);
   const update = useAppStore((state) => state.updateMarkedPoint);
   const remove = useAppStore((state) => state.removeMarkedPoint);
   const owner = items2d.find((item) => item.id === marked.ownerId);
@@ -31,6 +38,25 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
       : marked.source === 'tangent'
         ? '切点'
         : '标记点';
+
+  const objectIntersection = isIntersection
+    ? intersections.find((item) => item.id === marked.intersectionMarkId)
+    : undefined;
+  const tangentIntersection = isIntersection
+    ? tangentIntersections.find((item) => item.id === marked.intersectionMarkId)
+    : undefined;
+  const intersectionObjects = buildIntersectionObjects(items2d, markerLines, markedPoints);
+  const tangentChoices = buildTangentChoices(items2d);
+  const sourceMarkId = marked.intersectionMarkId;
+  const intersectionSource = objectIntersection
+    ? `${intersectionObjects.find((object) => object.id === objectIntersection.aId)?.label ?? '对象已删除'} × ${
+        intersectionObjects.find((object) => object.id === objectIntersection.bId)?.label ?? '对象已删除'
+      }`
+    : tangentIntersection
+      ? `${tangentChoices.find((choice) => choice.ownerId === tangentIntersection.a.ownerId && choice.tangentId === tangentIntersection.a.tangentId)?.label ?? '切线已删除'} × ${
+          tangentChoices.find((choice) => choice.ownerId === tangentIntersection.b.ownerId && choice.tangentId === tangentIntersection.b.tangentId)?.label ?? '切线已删除'
+        }`
+      : '来源交点已删除';
 
   return (
     <article
@@ -123,7 +149,28 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
               </div>
             </>
           ) : isIntersection ? (
-            <p className="setting-hint">交点位置由所选两个对象决定，不能单独拖动。</p>
+            <>
+              <div className="setting-heading">交点来源</div>
+              <p className="setting-hint marked-point-source">
+                {intersectionSource}
+                {objectIntersection && marked.intersectionIndex !== undefined
+                  ? `（第 ${marked.intersectionIndex + 1} 个交点）`
+                  : ''}
+              </p>
+              {sourceMarkId && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setSelectedId(sourceMarkId);
+                    setExpandedId(sourceMarkId);
+                  }}
+                >
+                  查看交点详情
+                </button>
+              )}
+              <p className="setting-hint">交点位置由所选两个对象决定，不能单独拖动。</p>
+            </>
           ) : (
             <>
               <div className="setting-row">

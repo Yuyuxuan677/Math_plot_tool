@@ -8,6 +8,7 @@ import { Board2D } from './components/Board2D';
 import { EmptyState } from './components/EmptyState';
 import { HelpDialog } from './components/HelpDialog';
 import { IntersectionDialog } from './components/IntersectionDialog';
+import { MarkerLineDialog } from './components/MarkerLineDialog';
 import { MobileSheet } from './components/MobileSheet';
 import { ObjectsPanel } from './components/ObjectsPanel';
 import { Toast } from './components/Toast';
@@ -96,6 +97,7 @@ export default function App() {
       {isMobile && <MobileSheet />}
       <AddMenu />
       <IntersectionDialog />
+      <MarkerLineDialog />
       <HelpDialog />
     </div>
   );

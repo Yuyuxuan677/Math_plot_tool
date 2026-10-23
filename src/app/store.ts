@@ -65,6 +65,7 @@ export interface AppState {
   selectedId: string | null;
   expandedId: string | null;
   intersectionDraft: { aId: string; bId: string } | null;
+  markerLineDraft: { aId: string; bId: string } | null;
   activeTool: Tool;
   toolOrientation: Orientation;
   toolTrayOpen: boolean;
@@ -80,6 +81,9 @@ export interface AppState {
   beginIntersection: () => void;
   setIntersectionDraft: (draft: { aId?: string; bId?: string } | null) => void;
   cancelIntersection: () => void;
+  beginMarkerLine: () => void;
+  setMarkerLineDraft: (draft: { aId?: string; bId?: string } | null) => void;
+  cancelMarkerLine: () => void;
   setActiveTool: (tool: Tool) => void;
   setToolOrientation: (orientation: Orientation) => void;
   setToolTrayOpen: (open: boolean) => void;
@@ -128,7 +132,7 @@ export interface AppState {
   addDivisionMark: () => string | null;
   updateDivisionMark: (id: string, patch: Partial<DivisionMark>) => void;
   removeDivisionMark: (id: string) => void;
-  addMarkerLine: () => string | null;
+  addMarkerLine: (aId: string, bId: string) => string | null;
   updateMarkerLine: (id: string, patch: Partial<MarkerLine>) => void;
   removeMarkerLine: (id: string) => void;
   syncIntersectionMarkers: (
@@ -380,6 +384,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedId: null,
   expandedId: null,
   intersectionDraft: null,
+  markerLineDraft: null,
   activeTool: 'select',
   toolOrientation: 'horizontal',
   toolTrayOpen: false,
@@ -419,6 +424,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         : null,
     })),
   cancelIntersection: () => set({ intersectionDraft: null }),
+  beginMarkerLine: () => {
+    const state = get();
+    if (state.markedPoints.length < 2) {
+      state.showToast('至少需要两个标记点才能连线', 'error');
+      return;
+    }
+    set({
+      markerLineDraft: { aId: '', bId: '' },
+      addMenuOpen: false,
+      sheetExpanded: false,
+    });
+  },
+  setMarkerLineDraft: (draft) =>
+    set((state) => ({
+      markerLineDraft: draft
+        ? {
+            aId: draft.aId ?? state.markerLineDraft?.aId ?? '',
+            bId: draft.bId ?? state.markerLineDraft?.bId ?? '',
+          }
+        : null,
+    })),
+  cancelMarkerLine: () => set({ markerLineDraft: null }),
   setActiveTool: (activeTool) => set({ activeTool }),
   setToolOrientation: (toolOrientation) => set({ toolOrientation }),
   setToolTrayOpen: (toolTrayOpen) => set({ toolTrayOpen }),
@@ -768,7 +795,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ]),
       visible: true,
       showCoordinates: true,
-      showTrace: true,
+      showTrace: false,
       traceClearToken: 0,
     };
     set({
@@ -1055,16 +1082,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedId: state.selectedId === id ? null : state.selectedId,
     })),
 
-  addMarkerLine: () => {
+  addMarkerLine: (aId, bId) => {
     const state = get();
-    if (state.markedPoints.length < 2) {
-      state.showToast('至少需要两个标记点才能连线', 'error');
+    const aExists = state.markedPoints.some((point) => point.id === aId);
+    const bExists = state.markedPoints.some((point) => point.id === bId);
+    if (!aId || !bId || aId === bId || !aExists || !bExists) {
+      state.showToast('请选择两个不同的标记点', 'error');
       return null;
     }
     const line: MarkerLine = {
       id: uid('line'),
-      aId: state.markedPoints[0].id,
-      bId: state.markedPoints[1].id,
+      aId,
+      bId,
       color: pickColor([
         ...state.items2d.map((item) => item.color),
         ...state.markerLines.map((item) => item.color),
@@ -1075,6 +1104,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       markerLines: [...state.markerLines, line],
       expandedId: line.id,
       selectedId: line.id,
+      markerLineDraft: null,
       addMenuOpen: false,
       sheetExpanded: false,
     });
@@ -1312,6 +1342,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       selectedId: null,
       expandedId: null,
       intersectionDraft: null,
+      markerLineDraft: null,
       activeTool: 'select',
       toolTrayOpen: false,
       autoMovePoints: false,

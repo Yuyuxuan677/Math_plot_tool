@@ -8,7 +8,7 @@ export function AddMenu() {
   const addItem2D = useAppStore((state) => state.addItem2D);
   const addItem3D = useAppStore((state) => state.addItem3D);
   const addIntersection = useAppStore((state) => state.beginIntersection);
-  const addMarkerLine = useAppStore((state) => state.addMarkerLine);
+  const addMarkerLine = useAppStore((state) => state.beginMarkerLine);
   const addTangentAngleConstraint = useAppStore(
     (state) => state.addTangentAngleConstraint,
   );
@@ -45,7 +45,7 @@ export function AddMenu() {
           },
           {
             label: '两点连线',
-            detail: '连接两个标记点构造直线',
+            detail: '先手动选择两个标记点再创建直线',
             action: () => addMarkerLine(),
           },
           {

@@ -65,6 +65,25 @@ async function createIntersection(page, aLabel, bLabel) {
   await page.waitForTimeout(750);
 }
 
+async function createMarkerLine(page, aName, bName) {
+  await addOption(page, '两点连线');
+  const pick = async (label, name) => {
+    const select = page.locator(`select[aria-label="${label}"]`);
+    const value = await select.locator('option').evaluateAll(
+      (options, pointName) =>
+        options.find((option) => (option.textContent ?? '').startsWith(`${pointName}（`))
+          ?.value,
+      name,
+    );
+    assert(value, `missing marked point ${name}`);
+    await select.selectOption(value);
+  };
+  await pick('选择连线起点', aName);
+  await pick('选择连线终点', bName);
+  await page.getByRole('button', { name: '创建连线' }).click();
+  await page.waitForTimeout(750);
+}
+
 async function expandCard(page, selector) {
   const card = page.locator(selector).first();
   if ((await card.locator('.card-body').count()) === 0) {
@@ -479,6 +498,25 @@ async function runUnifiedTools() {
       (await page.locator('.marked-point-card').first().innerText()).includes('交点 A'),
       'intersection was not registered as a marked point',
     );
+    const originCard = page.locator('.marked-point-card').first();
+    if ((await originCard.locator('.card-body').count()) === 0) {
+      await originCard.locator('.card-title-button').click();
+      await page.waitForTimeout(250);
+    }
+    assert((await originCard.innerText()).includes('交点来源'), 'intersection origin missing');
+    assert((await originCard.innerText()).includes('x 轴'), 'intersection source label missing');
+    await originCard.getByRole('button', { name: '查看交点详情' }).click();
+    await page.waitForTimeout(300);
+    assert.equal(
+      await page.locator('.intersection-card .card-body').count(),
+      1,
+      'intersection detail did not open',
+    );
+    assert.equal(
+      await page.locator('.intersection-card').getByRole('switch', { name: '记录交点轨迹' }).count(),
+      0,
+      'generic intersection should not expose trace',
+    );
 
     await page.locator('.objects-panel-head .primary-small-button').click();
     await page.waitForTimeout(150);
@@ -494,7 +532,7 @@ async function runUnifiedTools() {
     await createIntersection(page, '函数 y = x^2', '函数 y = 1');
     assert.equal(await page.locator('.intersection-card').count(), 2, 'curve intersection missing');
 
-    await addOption(page, '两点连线');
+    await createMarkerLine(page, 'A', 'B');
     assert.equal(await page.locator('.marker-line-card').count(), 1, 'marker line missing');
     assert((await page.locator('.marker-line-card').innerText()).includes('两点连线'));
     await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-unified-intersection.png` });

@@ -141,38 +141,10 @@ export function IntersectionCard({ mark }: { mark: IntersectionMark }) {
               label="显示交点坐标"
             />
           </div>
-          <div className="setting-row">
-            <div>
-              <span className="setting-title">记录交点轨迹</span>
-              <p className="setting-hint">交点自动成为标记点，可继续参与连线或 N 等分点</p>
-            </div>
-            <Switch
-              checked={mark.showTrace}
-              onChange={(checked) =>
-                update(mark.id, {
-                  showTrace: checked,
-                  traceClearToken: checked
-                    ? mark.traceClearToken
-                    : mark.traceClearToken + 1,
-                })
-              }
-              label="记录交点轨迹"
-            />
-          </div>
-          {mark.showTrace && (
-            <button
-              type="button"
-              className="text-button"
-              onClick={() =>
-                update(mark.id, {
-                  traceClearToken: mark.traceClearToken + 1,
-                  showTrace: false,
-                })
-              }
-            >
-              清除交点轨迹
-            </button>
-          )}
+          <p className="hint-text">
+            交点会自动成为标记点，可继续参与两点连线或 N 等分点。普通交点不记录轨迹；
+            轨迹功能只保留在两条切线的交点卡片中。
+          </p>
         </div>
       )}
     </article>

@@ -2345,6 +2345,13 @@ select:focus-visible {
   color: #0f766e;
 }
 
+.marked-point-source {
+  color: #334155;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .division-card .card-kind {
   color: #9f1239;
 }

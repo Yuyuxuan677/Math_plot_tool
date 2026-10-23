@@ -419,9 +419,9 @@ export class Board2DController {
       }
     }
 
-    this.syncIntersections(snapshot);
     this.syncTangentAngleConstraints(snapshot);
     this.syncTangentIntersections(snapshot);
+    this.syncIntersections(snapshot);
     this.syncMarkedPoints(snapshot);
     this.syncMarkerLines(snapshot);
     this.syncDivisionMarks(snapshot);
@@ -535,12 +535,6 @@ export class Board2DController {
       const trace = entry.trace;
       if (!trace || trace.points.length < 2) continue;
       drawPath(trace.points, entry.mark.color, 2.4);
-    }
-    for (const entry of this.intersectionEntries.values()) {
-      for (const trace of entry.traces) {
-        if (!trace || trace.points.length < 2) continue;
-        drawPath(trace.points, entry.mark.color, 2.2);
-      }
     }
     for (const entry of this.divisionEntries.values()) {
       for (const trace of entry.traces) {
@@ -764,18 +758,11 @@ export class Board2DController {
       const b = models.get(mark.bId);
       const intersections = mark.visible && a && b ? computeIntersections(a, b) : [];
       this.reportIntersectionMarkers(mark.id, 'object', intersections);
-      const traceReset =
-        entry.lastTraceClearToken !== mark.traceClearToken ||
-        entry.lastShowTrace !== mark.showTrace;
-      entry.lastTraceClearToken = mark.traceClearToken;
-      entry.lastShowTrace = mark.showTrace;
-      const shouldTrace = mark.visible && mark.showTrace;
 
       for (let index = 0; index < 8; index += 1) {
         this.ensureIntersectionPoint(entry, index);
         const point = entry.points[index];
         const label = entry.labels[index];
-        const trace = entry.traces[index];
         const hit = intersections[index];
 
         if (hit) {
@@ -832,36 +819,6 @@ export class Board2DController {
             if (label.visProp?.visible) label.setAttribute({ visible: false });
             entry.lastHits[index] = null;
             entry.lastLabelPositions[index] = null;
-          } catch {
-            // ignore
-          }
-        }
-
-        if (trace) {
-          try {
-            if (traceReset || !shouldTrace) {
-              this.clearIntersectionTrace(trace);
-            }
-            if (shouldTrace && hit) {
-              if (
-                !trace.last ||
-                Math.hypot(trace.last.x - hit.x, trace.last.y - hit.y) > 1e-4
-              ) {
-                trace.points.push({ x: hit.x, y: hit.y });
-                if (trace.points.length > 600) {
-                  trace.points.splice(0, trace.points.length - 600);
-                }
-                trace.last = { x: hit.x, y: hit.y };
-                this.requestTraceRedraw();
-              }
-            }
-          } catch {
-            // ignore trace errors
-          }
-        } else if (shouldTrace && hit) {
-          try {
-            const created = this.ensureIntersectionTrace(entry, index);
-            created.last = { x: hit.x, y: hit.y };
           } catch {
             // ignore
           }
