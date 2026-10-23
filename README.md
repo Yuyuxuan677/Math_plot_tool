@@ -238,9 +238,11 @@ tests/
 - 不做不等式区域、积分、极坐标、向量场、图片导出、云同步、撤销重做
 - 手机端优先竖屏；横屏、平板可用但布局会折叠
 
-## 第三方依赖
+## 许可证
 
-详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本项目采用 [MIT License](LICENSE)。
+
+第三方依赖及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ---
 

@@ -9,3 +9,14 @@ dist
 test-results
 playwright-report
 artifacts/tmp
+
+# Local secrets and environment-specific files
+.env
+.env.*
+!.env.example
+.dev.vars
+.wrangler
+*.pem
+*.key
+*.p12
+*.pfx
