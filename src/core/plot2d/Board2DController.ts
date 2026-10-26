@@ -855,7 +855,10 @@ export class Board2DController {
       }
       const a = models.get(mark.aId);
       const b = models.get(mark.bId);
-      const intersections = mark.visible && a && b ? computeIntersections(a, b) : [];
+      const intersections =
+        mark.visible && a && b
+          ? computeIntersections(a, b, this.getBoundingBox())
+          : [];
       this.reportIntersectionMarkers(mark.id, 'object', intersections);
 
       for (let index = 0; index < 8; index += 1) {

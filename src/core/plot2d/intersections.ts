@@ -10,6 +10,7 @@ import {
   hyperbolaParams,
   parabolaParams,
 } from '../geometry/equations';
+import { detectItemLine } from './lineTargets';
 
 type BoundingBox = [number, number, number, number];
 
@@ -131,13 +132,35 @@ function buildItemModel(
   const implicit = analysis as ImplicitAnalysis;
   if (!implicit.expr.ok) return null;
   const expr = implicit.expr;
+  const implicitFn = (x: number, y: number) => {
+    const value = expr.evaluate({ ...params, x, y });
+    return Number.isFinite(value) ? value : NaN;
+  };
+  const line = detectItemLine(item, params);
+  if (line) {
+    const xMin = Math.min(bbox[0], bbox[2]);
+    const xMax = Math.max(bbox[0], bbox[2]);
+    const yMin = Math.min(bbox[1], bbox[3]);
+    const yMax = Math.max(bbox[1], bbox[3]);
+    const b = line.vertical ? 0 : line.point.y - line.slope * line.point.x;
+    return {
+      id: item.id,
+      color: item.color,
+      line: line.vertical
+        ? { vertical: true, verticalX: line.point.x, m: Infinity, b: 0 }
+        : { vertical: false, verticalX: 0, m: line.slope, b },
+      implicit: implicitFn,
+      segments: [
+        line.vertical
+          ? { fn: (t) => ({ x: line.point.x, y: t }), min: yMin, max: yMax }
+          : { fn: (t) => ({ x: t, y: line.slope * t + b }), min: xMin, max: xMax },
+      ],
+    };
+  }
   return {
     id: item.id,
     color: item.color,
-    implicit: (x, y) => {
-      const value = expr.evaluate({ ...params, x, y });
-      return Number.isFinite(value) ? value : NaN;
-    },
+    implicit: implicitFn,
     segments: [],
   };
 }
@@ -414,7 +437,166 @@ function polylineIntersections(a: CurveModel, b: CurveModel): Point2[] {
   return points;
 }
 
-export function computeIntersections(a: CurveModel, b: CurveModel): Point2[] {
+function implicitPairIntersections(
+  a: CurveModel,
+  b: CurveModel,
+  bbox: BoundingBox,
+): Point2[] {
+  if (!a.implicit || !b.implicit) return [];
+  const xMin = Math.min(bbox[0], bbox[2]);
+  const xMax = Math.max(bbox[0], bbox[2]);
+  const yMin = Math.min(bbox[1], bbox[3]);
+  const yMax = Math.max(bbox[1], bbox[3]);
+  const grid = 96;
+  const valuesA: number[][] = [];
+  for (let iy = 0; iy <= grid; iy += 1) {
+    const y = yMin + ((yMax - yMin) * iy) / grid;
+    const rowA: number[] = [];
+    for (let ix = 0; ix <= grid; ix += 1) {
+      const x = xMin + ((xMax - xMin) * ix) / grid;
+      try {
+        rowA.push(a.implicit(x, y));
+      } catch {
+        rowA.push(NaN);
+      }
+    }
+    valuesA.push(rowA);
+  }
+
+  const refine = (start: Point2): Point2 | null => {
+    let x = start.x;
+    let y = start.y;
+    for (let iteration = 0; iteration < 12; iteration += 1) {
+      try {
+        const f = a.implicit!(x, y);
+        const g = b.implicit!(x, y);
+        if (!Number.isFinite(f) || !Number.isFinite(g)) return null;
+        const h = 1e-5 * Math.max(1, Math.abs(x), Math.abs(y));
+        const fx = (a.implicit!(x + h, y) - a.implicit!(x - h, y)) / (2 * h);
+        const fy = (a.implicit!(x, y + h) - a.implicit!(x, y - h)) / (2 * h);
+        const gx = (b.implicit!(x + h, y) - b.implicit!(x - h, y)) / (2 * h);
+        const gy = (b.implicit!(x, y + h) - b.implicit!(x, y - h)) / (2 * h);
+        const determinant = fx * gy - fy * gx;
+        if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) return null;
+        const dx = (-f * gy + g * fy) / determinant;
+        const dy = (gx * f - fx * g) / determinant;
+        if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+        x += dx;
+        y += dy;
+        if (Math.hypot(dx, dy) < 1e-10) return { x, y };
+        if (x < xMin - 1e-6 || x > xMax + 1e-6 || y < yMin - 1e-6 || y > yMax + 1e-6) {
+          return null;
+        }
+      } catch {
+        return null;
+      }
+    }
+    return { x, y };
+  };
+
+  const candidates: Point2[] = [];
+  const addCandidate = (point: Point2 | null) => {
+    if (!point || !finitePoint(point)) return;
+    if (
+      point.x < xMin - 1e-6 ||
+      point.x > xMax + 1e-6 ||
+      point.y < yMin - 1e-6 ||
+      point.y > yMax + 1e-6
+    ) {
+      return;
+    }
+    const existing = candidates.find(
+      (candidate) => Math.hypot(candidate.x - point.x, candidate.y - point.y) < 1e-4,
+    );
+    if (!existing) candidates.push(point);
+  };
+
+  for (let iy = 0; iy < grid; iy += 1) {
+    for (let ix = 0; ix < grid; ix += 1) {
+      const corners = [
+        { x: xMin + ((xMax - xMin) * ix) / grid, y: yMin + ((yMax - yMin) * iy) / grid },
+        { x: xMin + ((xMax - xMin) * (ix + 1)) / grid, y: yMin + ((yMax - yMin) * iy) / grid },
+        { x: xMin + ((xMax - xMin) * (ix + 1)) / grid, y: yMin + ((yMax - yMin) * (iy + 1)) / grid },
+        { x: xMin + ((xMax - xMin) * ix) / grid, y: yMin + ((yMax - yMin) * (iy + 1)) / grid },
+      ];
+      const fa = [
+        valuesA[iy][ix],
+        valuesA[iy][ix + 1],
+        valuesA[iy + 1][ix + 1],
+        valuesA[iy + 1][ix],
+      ];
+      if (fa.some((value) => !Number.isFinite(value))) continue;
+      const roots: Point2[] = [];
+      for (let edge = 0; edge < 4; edge += 1) {
+        const p1 = corners[edge];
+        const p2 = corners[(edge + 1) % 4];
+        const v1 = fa[edge];
+        const v2 = fa[(edge + 1) % 4];
+        if (v1 === 0 && v2 === 0) continue;
+        if (v1 === 0) {
+          roots.push(p1);
+        } else if (v2 === 0) {
+          roots.push(p2);
+        } else if (v1 * v2 < 0) {
+          const ratio = v1 / (v1 - v2);
+          roots.push({
+            x: p1.x + (p2.x - p1.x) * ratio,
+            y: p1.y + (p2.y - p1.y) * ratio,
+          });
+        }
+      }
+      if (roots.length === 0) continue;
+      const uniqueRoots = roots.filter(
+        (root, index) =>
+          roots.findIndex(
+            (candidate) =>
+              Math.hypot(candidate.x - root.x, candidate.y - root.y) < 1e-8,
+          ) === index,
+      );
+      for (let firstIndex = 0; firstIndex < uniqueRoots.length; firstIndex += 1) {
+        const first = uniqueRoots[firstIndex];
+        let gFirst = NaN;
+        try {
+          gFirst = b.implicit(first.x, first.y);
+        } catch {
+          gFirst = NaN;
+        }
+        if (!Number.isFinite(gFirst)) continue;
+        if (Math.abs(gFirst) < 1e-7) addCandidate(refine(first));
+        for (let secondIndex = firstIndex + 1; secondIndex < uniqueRoots.length; secondIndex += 1) {
+          const second = uniqueRoots[secondIndex];
+          let gSecond = NaN;
+          try {
+            gSecond = b.implicit(second.x, second.y);
+          } catch {
+            gSecond = NaN;
+          }
+          if (!Number.isFinite(gSecond)) continue;
+          let candidate: Point2 | null = null;
+          if (gFirst === 0 || gSecond === 0 || gFirst * gSecond < 0) {
+            const denominator = gFirst - gSecond;
+            const ratio = Math.abs(denominator) < 1e-12 ? 0.5 : gFirst / denominator;
+            candidate = {
+              x: first.x + (second.x - first.x) * ratio,
+              y: first.y + (second.y - first.y) * ratio,
+            };
+          } else if (Math.abs(gFirst) < 1e-5 || Math.abs(gSecond) < 1e-5) {
+            candidate = Math.abs(gFirst) < Math.abs(gSecond) ? first : second;
+          }
+          if (candidate) addCandidate(refine(candidate));
+        }
+      }
+    }
+  }
+
+  return candidates.slice(0, 8);
+}
+
+export function computeIntersections(
+  a: CurveModel,
+  b: CurveModel,
+  bbox: BoundingBox = [-10, 10, 10, -10],
+): Point2[] {
   if (a.line && b.line) return dedupe(lineLineIntersection(a.line, b.line));
 
   const roots: Point2[] = [];
@@ -424,6 +606,8 @@ export function computeIntersections(a: CurveModel, b: CurveModel): Point2[] {
     for (const segment of b.segments) roots.push(...rootsOnSegment(segment, a.implicit));
   } else if (a.segments.length > 0 && b.segments.length > 0) {
     roots.push(...polylineIntersections(a, b));
+  } else if (a.implicit && b.implicit) {
+    roots.push(...implicitPairIntersections(a, b, bbox));
   }
   return dedupe(roots).slice(0, 8);
 }

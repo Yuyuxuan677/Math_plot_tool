@@ -580,6 +580,47 @@ async function runUnifiedTools() {
   }
 }
 
+async function runImplicitPair() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await context.newPage();
+  attachWatch(page, 'implicit-pair');
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(500);
+    await addOption(page, '隐式方程');
+    let card = page.locator('.object-card[data-kind="implicit"]').first();
+    if ((await card.locator('.card-body').count()) === 0) {
+      await card.locator('.card-title-button').click();
+      await page.waitForTimeout(200);
+    }
+    await card.locator('.expression-input').first().fill('x^2/4 + y^2 = 1');
+    await page.waitForTimeout(500);
+    await addOption(page, '隐式方程');
+    card = page.locator('.object-card[data-kind="implicit"]').nth(1);
+    if ((await card.locator('.card-body').count()) === 0) {
+      await card.locator('.card-title-button').click();
+      await page.waitForTimeout(200);
+    }
+    await card.locator('.expression-input').first().fill('y - 1.54*x = 0');
+    await page.waitForTimeout(600);
+    await createIntersection(page, '方程 x^2/4 + y^2 = 1', '方程 y - 1.54*x = 0');
+    assert.equal(await page.locator('.intersection-card').count(), 1, 'implicit pair card missing');
+    assert.equal(
+      await page.locator('.marked-point-card').count(),
+      2,
+      'implicit pair intersections missing',
+    );
+    assert(
+      (await page.locator('.marked-point-card').first().innerText()).includes('交点'),
+      'implicit pair intersections were not marked',
+    );
+  } catch (error) {
+    recordError(error);
+  } finally {
+    await context.close();
+  }
+}
+
 async function runCoincidentPoints() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
@@ -770,6 +811,7 @@ try {
   await runDesktop();
   await runMobile();
   await runUnifiedTools();
+  await runImplicitPair();
   await runCoincidentPoints();
   await runPerpendicularTools();
   await runPointTools();
