@@ -2,6 +2,7 @@ import { useAppStore } from '../app/store';
 import type { MarkedPoint } from '../app/types';
 import { item2DLabel } from '../app/curveRefs';
 import { buildIntersectionObjects } from '../app/intersectionRefs';
+import { perpendicularLineLabel } from '../app/lineRefs';
 import { buildTangentChoices } from '../app/tangentRefs';
 import { formatNumber } from '../app/utils';
 import {
@@ -23,11 +24,14 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
   const tangentIntersections = useAppStore((state) => state.tangentIntersections);
   const markerLines = useAppStore((state) => state.markerLines);
   const markedPoints = useAppStore((state) => state.markedPoints);
+  const perpendiculars = useAppStore((state) => state.perpendiculars);
+  const paramValues = useAppStore((state) => state.paramValues);
   const update = useAppStore((state) => state.updateMarkedPoint);
   const remove = useAppStore((state) => state.removeMarkedPoint);
   const owner = items2d.find((item) => item.id === marked.ownerId);
   const isFree = marked.source === 'free';
   const isIntersection = marked.source === 'intersection';
+  const isPerpendicular = marked.source === 'perpendicular';
   const canLockCoordinate = marked.source === 'manual' && !isFree;
   const lock = marked.coordinateLock;
   const toggleExpanded = () => setExpandedId(expanded ? null : marked.id);
@@ -35,9 +39,11 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
     ? '自由点'
     : isIntersection
       ? '交点'
-      : marked.source === 'tangent'
-        ? '切点'
-        : '标记点';
+      : isPerpendicular
+        ? '垂足'
+        : marked.source === 'tangent'
+          ? '切点'
+          : '标记点';
 
   const objectIntersection = isIntersection
     ? intersections.find((item) => item.id === marked.intersectionMarkId)
@@ -48,6 +54,22 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
   const intersectionObjects = buildIntersectionObjects(items2d, markerLines, markedPoints);
   const tangentChoices = buildTangentChoices(items2d);
   const sourceMarkId = marked.intersectionMarkId;
+  const perpendicular = isPerpendicular
+    ? perpendiculars.find((item) => item.id === marked.perpendicularMarkId)
+    : undefined;
+  const perpendicularSourcePoint = perpendicular
+    ? markedPoints.find((point) => point.id === perpendicular.pointId)
+    : undefined;
+  const perpendicularSource = perpendicular
+    ? `过点 ${perpendicularSourcePoint?.name ?? '?'} 作 ${perpendicularLineLabel(
+        perpendicular.lineId,
+        items2d,
+        markerLines,
+        markedPoints,
+        paramValues,
+        perpendiculars,
+      )} 的垂线`
+    : '来源垂线已删除';
   const intersectionSource = objectIntersection
     ? `${intersectionObjects.find((object) => object.id === objectIntersection.aId)?.label ?? '对象已删除'} × ${
         intersectionObjects.find((object) => object.id === objectIntersection.bId)?.label ?? '对象已删除'
@@ -79,9 +101,11 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
               ? '自由点，可手动输入坐标'
               : isIntersection
                 ? '由交点自动生成'
-                : owner
-                  ? item2DLabel(owner)
-                  : '曲线已删除'}
+                : isPerpendicular
+                  ? '由垂线自动生成'
+                  : owner
+                    ? item2DLabel(owner)
+                    : '曲线已删除'}
           </span>
         </button>
         <div className="card-actions">
@@ -93,7 +117,7 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
           >
             {marked.visible ? <IconEye size={17} /> : <IconEyeOff size={17} />}
           </button>
-          {marked.source !== 'tangent' && !isIntersection && (
+          {marked.source !== 'tangent' && !isIntersection && !isPerpendicular && (
             <button
               type="button"
               className="icon-button small-icon danger-icon"
@@ -120,9 +144,11 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
               ? `自由点 ${marked.name} 不依附曲线，可以直接拖动或手动输入固定坐标。`
               : isIntersection
                 ? `交点 ${marked.name} 自动跟随两个对象移动，可用于连线或 N 等分点。`
-                : marked.source === 'tangent'
-                  ? `由切线自动生成的切点 ${marked.name}；拖动切线切点改变位置。`
-                  : `点 ${marked.name} 可在曲线上拖动；坐标为实时值。`}
+                : isPerpendicular
+                  ? `垂足 ${marked.name} 由标记点和直线的垂线自动生成。`
+                  : marked.source === 'tangent'
+                    ? `由切线自动生成的切点 ${marked.name}；拖动切线切点改变位置。`
+                    : `点 ${marked.name} 可在曲线上拖动；坐标为实时值。`}
           </p>
 
           {isFree ? (
@@ -170,6 +196,26 @@ export function MarkedPointCard({ marked }: { marked: MarkedPoint }) {
                 </button>
               )}
               <p className="setting-hint">交点位置由所选两个对象决定，不能单独拖动。</p>
+            </>
+          ) : isPerpendicular ? (
+            <>
+              <div className="setting-heading">垂足来源</div>
+              <p className="setting-hint marked-point-source">{perpendicularSource}</p>
+              {marked.perpendicularMarkId && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    const id = marked.perpendicularMarkId;
+                    if (!id) return;
+                    setSelectedId(id);
+                    setExpandedId(id);
+                  }}
+                >
+                  查看垂线详情
+                </button>
+              )}
+              <p className="setting-hint">垂足位置由标记点和直线决定，不能单独拖动。</p>
             </>
           ) : (
             <>

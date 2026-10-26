@@ -210,7 +210,7 @@ export interface MarkedPoint {
   /** Expression curve that owns this point. */
   ownerId: string;
   /** Manual point, tangent point, free point or intersection point. */
-  source?: 'manual' | 'tangent' | 'free' | 'intersection';
+  source?: 'manual' | 'tangent' | 'free' | 'intersection' | 'perpendicular';
   /** Present when source === 'tangent'. */
   tangentOwnerId?: string;
   tangentId?: string;
@@ -218,6 +218,8 @@ export interface MarkedPoint {
   intersectionMarkId?: string;
   intersectionIndex?: number;
   intersectionKind?: 'object' | 'tangent';
+  /** Present when source === 'perpendicular'. */
+  perpendicularMarkId?: string;
   /** Auto-assigned display name such as A, B, C. */
   name: string;
   point: Point2;
@@ -252,6 +254,19 @@ export interface MarkerLine {
   visible: boolean;
 }
 
+export interface PerpendicularMark {
+  id: string;
+  /** Marked point the perpendicular passes through. */
+  pointId: string;
+  /** Target line reference: axis:x, axis:y, line:<id>, tan:<owner>:<id>, item:<id>. */
+  lineId: string;
+  color: string;
+  visible: boolean;
+  showCoordinates: boolean;
+  showTrace: boolean;
+  traceClearToken: number;
+}
+
 export interface IntersectionMark {
   id: string;
   /** First curve/line object. */
@@ -281,6 +296,7 @@ export interface PersistedState {
   markedPoints: MarkedPoint[];
   divisionMarks: DivisionMark[];
   markerLines: MarkerLine[];
+  perpendiculars: PerpendicularMark[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;

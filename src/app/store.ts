@@ -24,6 +24,7 @@ import type {
   ParametricItem,
   ParametricSurfaceItem,
   ParabolaShape,
+  PerpendicularMark,
   Point2,
   SurfaceItem,
   TangentAngleConstraint,
@@ -35,6 +36,7 @@ import {
   buildIntersectionObjects,
   tangentObjectId,
 } from './intersectionRefs';
+import { buildPerpendicularLineOptions } from './lineRefs';
 import { nextMarkedPointName } from './markedPoints';
 import { loadPersistedState } from './persistence';
 import { clearExpressionCaches } from '../core/expression/analyze';
@@ -56,6 +58,7 @@ export interface AppState {
   markedPoints: MarkedPoint[];
   divisionMarks: DivisionMark[];
   markerLines: MarkerLine[];
+  perpendiculars: PerpendicularMark[];
   paramValues: Record<string, string>;
   view2dBoundingBox: [number, number, number, number] | null;
   snapToGrid: boolean;
@@ -66,6 +69,7 @@ export interface AppState {
   expandedId: string | null;
   intersectionDraft: { aId: string; bId: string } | null;
   markerLineDraft: { aId: string; bId: string } | null;
+  perpendicularDraft: { pointId: string; lineId: string } | null;
   activeTool: Tool;
   toolOrientation: Orientation;
   toolTrayOpen: boolean;
@@ -84,6 +88,13 @@ export interface AppState {
   beginMarkerLine: () => void;
   setMarkerLineDraft: (draft: { aId?: string; bId?: string } | null) => void;
   cancelMarkerLine: () => void;
+  beginPerpendicular: () => void;
+  setPerpendicularDraft: (draft: { pointId?: string; lineId?: string } | null) => void;
+  cancelPerpendicular: () => void;
+  addPerpendicular: (pointId: string, lineId: string) => string | null;
+  updatePerpendicular: (id: string, patch: Partial<PerpendicularMark>) => void;
+  removePerpendicular: (id: string) => void;
+  syncPerpendicularFoot: (markId: string, point: Point2) => void;
   setActiveTool: (tool: Tool) => void;
   setToolOrientation: (orientation: Orientation) => void;
   setToolTrayOpen: (open: boolean) => void;
@@ -375,6 +386,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   markedPoints: initialPoints,
   divisionMarks: persisted?.divisionMarks ?? [],
   markerLines: persisted?.markerLines ?? [],
+  perpendiculars: persisted?.perpendiculars ?? [],
   paramValues: persisted?.paramValues ?? initialParamValues(),
   view2dBoundingBox: persisted?.view2dBoundingBox ?? null,
   snapToGrid: persisted?.snapToGrid ?? true,
@@ -385,6 +397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   expandedId: null,
   intersectionDraft: null,
   markerLineDraft: null,
+  perpendicularDraft: null,
   activeTool: 'select',
   toolOrientation: 'horizontal',
   toolTrayOpen: false,
@@ -446,6 +459,152 @@ export const useAppStore = create<AppState>((set, get) => ({
         : null,
     })),
   cancelMarkerLine: () => set({ markerLineDraft: null }),
+  beginPerpendicular: () => {
+    const state = get();
+    if (state.markedPoints.length === 0) {
+      state.showToast('请先创建至少一个标记点', 'error');
+      return;
+    }
+    const lines = buildPerpendicularLineOptions(
+      state.items2d,
+      state.markerLines,
+      state.markedPoints,
+      state.paramValues,
+      state.perpendiculars,
+    );
+    if (lines.length === 0) {
+      state.showToast('请先创建一条直线', 'error');
+      return;
+    }
+    set({
+      perpendicularDraft: { pointId: '', lineId: '' },
+      addMenuOpen: false,
+      sheetExpanded: false,
+    });
+  },
+  setPerpendicularDraft: (draft) =>
+    set((state) => ({
+      perpendicularDraft: draft
+        ? {
+            pointId: draft.pointId ?? state.perpendicularDraft?.pointId ?? '',
+            lineId: draft.lineId ?? state.perpendicularDraft?.lineId ?? '',
+          }
+        : null,
+    })),
+  cancelPerpendicular: () => set({ perpendicularDraft: null }),
+  addPerpendicular: (pointId, lineId) => {
+    const state = get();
+    const point = state.markedPoints.find((item) => item.id === pointId);
+    const line = buildPerpendicularLineOptions(
+      state.items2d,
+      state.markerLines,
+      state.markedPoints,
+      state.paramValues,
+      state.perpendiculars,
+    ).find((item) => item.id === lineId);
+    if (!point || !line) {
+      state.showToast('请选择标记点和直线', 'error');
+      return null;
+    }
+    const mark: PerpendicularMark = {
+      id: uid('perp'),
+      pointId,
+      lineId,
+      color: pickColor([
+        ...state.items2d.map((item) => item.color),
+        ...state.perpendiculars.map((item) => item.color),
+      ]),
+      visible: true,
+      showCoordinates: false,
+      showTrace: false,
+      traceClearToken: 0,
+    };
+    set({
+      perpendiculars: [...state.perpendiculars, mark],
+      perpendicularDraft: null,
+      expandedId: mark.id,
+      selectedId: mark.id,
+      addMenuOpen: false,
+      sheetExpanded: false,
+    });
+    return mark.id;
+  },
+  updatePerpendicular: (id, patch) =>
+    set((state) => ({
+      perpendiculars: state.perpendiculars.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      ),
+    })),
+  removePerpendicular: (id) =>
+    set((state) => {
+      const removedPerpIds = new Set([
+        id,
+        ...state.perpendiculars
+          .filter((item) => item.lineId === `perp:${id}`)
+          .map((item) => item.id),
+      ]);
+      const removedMarkerIds = new Set(
+        state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'perpendicular' &&
+              point.perpendicularMarkId &&
+              removedPerpIds.has(point.perpendicularMarkId),
+          )
+          .map((point) => point.id),
+      );
+      return {
+        perpendiculars: state.perpendiculars.filter(
+          (item) => !removedPerpIds.has(item.id),
+        ),
+        markedPoints: state.markedPoints.filter(
+          (point) => !removedMarkerIds.has(point.id),
+        ),
+        markerLines: state.markerLines.filter(
+          (line) =>
+            !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
+        divisionMarks: state.divisionMarks.filter(
+          (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
+        ),
+        expandedId: state.expandedId === id ? null : state.expandedId,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+      };
+    }),
+  syncPerpendicularFoot: (markId, point) => {
+    const state = get();
+    const existing = state.markedPoints.find(
+      (item) =>
+        item.source === 'perpendicular' && item.perpendicularMarkId === markId,
+    );
+    if (existing) {
+      if (Math.hypot(existing.point.x - point.x, existing.point.y - point.y) < 1e-5) {
+        return;
+      }
+      set({
+        markedPoints: state.markedPoints.map((item) =>
+          item.id === existing.id
+            ? { ...item, point: { x: point.x, y: point.y } }
+            : item,
+        ),
+      });
+      return;
+    }
+    set({
+      markedPoints: [
+        ...state.markedPoints,
+        {
+          id: uid('pt'),
+          ownerId: '',
+          source: 'perpendicular',
+          perpendicularMarkId: markId,
+          name: nextMarkedPointName(state.markedPoints),
+          point: { x: point.x, y: point.y },
+          visible: true,
+        },
+      ],
+    });
+  },
   setActiveTool: (activeTool) => set({ activeTool }),
   setToolOrientation: (toolOrientation) => set({ toolOrientation }),
   setToolTrayOpen: (toolTrayOpen) => set({ toolTrayOpen }),
@@ -540,7 +699,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           .filter((mark) => mark.a.ownerId === id || mark.b.ownerId === id)
           .map((mark) => mark.id),
       );
-      const removedMarkerIds = new Set(
+      const baseRemovedMarkerIds = new Set(
         state.markedPoints
           .filter(
             (point) =>
@@ -552,6 +711,27 @@ export const useAppStore = create<AppState>((set, get) => ({
           )
           .map((point) => point.id),
       );
+      const removedPerpIds = new Set(
+        state.perpendiculars
+          .filter(
+            (item) =>
+              item.lineId === `item:${id}` ||
+              item.lineId.startsWith(`tan:${id}:`) ||
+              baseRemovedMarkerIds.has(item.pointId),
+          )
+          .map((item) => item.id),
+      );
+      const removedMarkerIds = new Set([
+        ...baseRemovedMarkerIds,
+        ...state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'perpendicular' &&
+              point.perpendicularMarkId &&
+              removedPerpIds.has(point.perpendicularMarkId),
+          )
+          .map((point) => point.id),
+      ]);
       const next: Partial<AppState> = {
         items2d: state.items2d.filter((item) => item.id !== id),
         items3d: state.items3d.filter((item) => item.id !== id),
@@ -601,6 +781,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         markerLines: state.markerLines.filter(
           (line) =>
             !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
+        perpendiculars: state.perpendiculars.filter(
+          (item) => !removedPerpIds.has(item.id),
         ),
       };
       if (state.expandedId === id) next.expandedId = null;
@@ -1027,17 +1210,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   removeMarkedPoint: (id) =>
-    set((state) => ({
-      markedPoints: state.markedPoints.filter((point) => point.id !== id),
-      divisionMarks: state.divisionMarks.filter(
-        (mark) => mark.aId !== id && mark.bId !== id,
-      ),
-      markerLines: state.markerLines.filter(
-        (line) => line.aId !== id && line.bId !== id,
-      ),
-      expandedId: state.expandedId === id ? null : state.expandedId,
-      selectedId: state.selectedId === id ? null : state.selectedId,
-    })),
+    set((state) => {
+      const removedPerpIds = new Set(
+        state.perpendiculars
+          .filter((item) => item.pointId === id)
+          .map((item) => item.id),
+      );
+      const removedMarkerIds = new Set([
+        id,
+        ...state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'perpendicular' &&
+              point.perpendicularMarkId &&
+              removedPerpIds.has(point.perpendicularMarkId),
+          )
+          .map((point) => point.id),
+      ]);
+      return {
+        markedPoints: state.markedPoints.filter(
+          (point) => !removedMarkerIds.has(point.id),
+        ),
+        perpendiculars: state.perpendiculars.filter(
+          (item) => !removedPerpIds.has(item.id),
+        ),
+        divisionMarks: state.divisionMarks.filter(
+          (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
+        ),
+        markerLines: state.markerLines.filter(
+          (line) => !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
+        expandedId: state.expandedId === id ? null : state.expandedId,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+      };
+    }),
 
   addDivisionMark: () => {
     const state = get();
@@ -1119,11 +1325,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   removeMarkerLine: (id) =>
-    set((state) => ({
-      markerLines: state.markerLines.filter((line) => line.id !== id),
-      expandedId: state.expandedId === id ? null : state.expandedId,
-      selectedId: state.selectedId === id ? null : state.selectedId,
-    })),
+    set((state) => {
+      const removedPerpIds = new Set(
+        state.perpendiculars
+          .filter((item) => item.lineId === `line:${id}`)
+          .map((item) => item.id),
+      );
+      const removedMarkerIds = new Set(
+        state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'perpendicular' &&
+              point.perpendicularMarkId &&
+              removedPerpIds.has(point.perpendicularMarkId),
+          )
+          .map((point) => point.id),
+      );
+      return {
+        markerLines: state.markerLines.filter((line) => line.id !== id),
+        perpendiculars: state.perpendiculars.filter(
+          (item) => !removedPerpIds.has(item.id),
+        ),
+        markedPoints: state.markedPoints.filter(
+          (point) => !removedMarkerIds.has(point.id),
+        ),
+        divisionMarks: state.divisionMarks.filter(
+          (mark) => !removedMarkerIds.has(mark.aId) && !removedMarkerIds.has(mark.bId),
+        ),
+        expandedId: state.expandedId === id ? null : state.expandedId,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+      };
+    }),
 
   syncIntersectionMarkers: (markId, kind, points) => {
     const state = get();
@@ -1264,7 +1496,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           .filter((mark) => mark.aId === tangentRef || mark.bId === tangentRef)
           .map((mark) => mark.id),
       );
-      const removedMarkerIds = new Set(
+      const baseRemovedMarkerIds = new Set(
         state.markedPoints
           .filter(
             (point) =>
@@ -1278,6 +1510,25 @@ export const useAppStore = create<AppState>((set, get) => ({
           )
           .map((point) => point.id),
       );
+      const removedPerpIds = new Set(
+        state.perpendiculars
+          .filter(
+            (item) =>
+              item.lineId === tangentRef || baseRemovedMarkerIds.has(item.pointId),
+          )
+          .map((item) => item.id),
+      );
+      const removedMarkerIds = new Set([
+        ...baseRemovedMarkerIds,
+        ...state.markedPoints
+          .filter(
+            (point) =>
+              point.source === 'perpendicular' &&
+              point.perpendicularMarkId &&
+              removedPerpIds.has(point.perpendicularMarkId),
+          )
+          .map((point) => point.id),
+      ]);
       return {
         items2d: state.items2d.map((item) =>
           item.id === ownerId
@@ -1304,6 +1555,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
         markerLines: state.markerLines.filter(
           (line) => !removedMarkerIds.has(line.aId) && !removedMarkerIds.has(line.bId),
+        ),
+        perpendiculars: state.perpendiculars.filter(
+          (item) => !removedPerpIds.has(item.id),
         ),
       };
     }),
@@ -1375,12 +1629,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       markedPoints: [],
       divisionMarks: [],
       markerLines: [],
+      perpendiculars: [],
       paramValues: {},
       view2dBoundingBox: null,
       selectedId: null,
       expandedId: null,
       intersectionDraft: null,
       markerLineDraft: null,
+      perpendicularDraft: null,
       activeTool: 'select',
       toolTrayOpen: false,
       autoMovePoints: false,

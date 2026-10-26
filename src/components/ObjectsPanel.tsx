@@ -5,6 +5,7 @@ import { MarkedPointCard } from './MarkedPointCard';
 import { DivisionCard } from './DivisionCard';
 import { IntersectionCard } from './IntersectionCard';
 import { MarkerLineCard } from './MarkerLineCard';
+import { PerpendicularCard } from './PerpendicularCard';
 import { Item3DCard } from './Item3DCard';
 import { ParameterPanel } from './ParameterPanel';
 import { TangentAngleCard } from './TangentAngleCard';
@@ -21,6 +22,7 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
   const markerLines = useAppStore((state) => state.markerLines);
+  const perpendiculars = useAppStore((state) => state.perpendiculars);
   const autoMovePoints = useAppStore((state) => state.autoMovePoints);
   const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
   const expandedId = useAppStore((state) => state.expandedId);
@@ -36,7 +38,8 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
         tangentAngleConstraints.length +
         markedPoints.length +
         divisionMarks.length +
-        markerLines.length
+        markerLines.length +
+        perpendiculars.length
       : 0);
 
   useEffect(() => {
@@ -179,6 +182,20 @@ export function ObjectsPanel({ compact = false }: { compact?: boolean }) {
           <div className="object-list">
             {markerLines.map((line) => (
               <MarkerLineCard key={line.id} line={line} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {mode === '2d' && perpendiculars.length > 0 && (
+        <section className="panel-section perpendiculars-section" aria-label="垂线">
+          <div className="section-heading">
+            <h3>垂线</h3>
+            <span className="section-count">{perpendiculars.length}</span>
+          </div>
+          <div className="object-list">
+            {perpendiculars.map((mark) => (
+              <PerpendicularCard key={mark.id} mark={mark} />
             ))}
           </div>
         </section>

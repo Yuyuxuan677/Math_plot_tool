@@ -11,6 +11,7 @@ import { IntersectionDialog } from './components/IntersectionDialog';
 import { MarkerLineDialog } from './components/MarkerLineDialog';
 import { MobileSheet } from './components/MobileSheet';
 import { ObjectsPanel } from './components/ObjectsPanel';
+import { PerpendicularDialog } from './components/PerpendicularDialog';
 import { Toast } from './components/Toast';
 import { TopBar } from './components/TopBar';
 
@@ -31,6 +32,7 @@ export default function App() {
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
   const markerLines = useAppStore((state) => state.markerLines);
+  const perpendiculars = useAppStore((state) => state.perpendiculars);
   const paramValues = useAppStore((state) => state.paramValues);
   const view2dBoundingBox = useAppStore((state) => state.view2dBoundingBox);
   const snapToGrid = useAppStore((state) => state.snapToGrid);
@@ -51,6 +53,7 @@ export default function App() {
         markedPoints,
         divisionMarks,
         markerLines,
+        perpendiculars,
         paramValues,
         view2dBoundingBox,
         snapToGrid,
@@ -68,6 +71,7 @@ export default function App() {
     markedPoints,
     divisionMarks,
     markerLines,
+    perpendiculars,
     paramValues,
     view2dBoundingBox,
     snapToGrid,
@@ -98,6 +102,7 @@ export default function App() {
       <AddMenu />
       <IntersectionDialog />
       <MarkerLineDialog />
+      <PerpendicularDialog />
       <HelpDialog />
     </div>
   );

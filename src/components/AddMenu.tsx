@@ -9,6 +9,7 @@ export function AddMenu() {
   const addItem3D = useAppStore((state) => state.addItem3D);
   const addIntersection = useAppStore((state) => state.beginIntersection);
   const addMarkerLine = useAppStore((state) => state.beginMarkerLine);
+  const addPerpendicular = useAppStore((state) => state.beginPerpendicular);
   const addTangentAngleConstraint = useAppStore(
     (state) => state.addTangentAngleConstraint,
   );
@@ -47,6 +48,11 @@ export function AddMenu() {
             label: '两点连线',
             detail: '先手动选择两个标记点再创建直线',
             action: () => addMarkerLine(),
+          },
+          {
+            label: '过点作垂线',
+            detail: '手动选择标记点和直线，垂足自动标记',
+            action: () => addPerpendicular(),
           },
           {
             label: autoMovePoints ? '暂停自动移动' : '自动移动标记点',

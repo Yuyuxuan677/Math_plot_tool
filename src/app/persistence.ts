@@ -10,6 +10,7 @@ import type {
   MarkerLine,
   Orientation,
   ParametricSurfaceItem,
+  PerpendicularMark,
   PersistedState,
   Point2,
   Tangent,
@@ -339,14 +340,23 @@ function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
         ? 'free'
         : value.source === 'intersection'
           ? 'intersection'
-          : 'manual';
+          : value.source === 'perpendicular'
+            ? 'perpendicular'
+            : 'manual';
   const ownerId =
-    source === 'free' || source === 'intersection'
+    source === 'free' || source === 'intersection' || source === 'perpendicular'
       ? ''
       : typeof value.ownerId === 'string'
         ? value.ownerId
         : '';
-  if (source !== 'free' && source !== 'intersection' && !ownerId) return null;
+  if (source !== 'free' && source !== 'intersection' && source !== 'perpendicular' && !ownerId) {
+    return null;
+  }
+  const perpendicularMarkId =
+    source === 'perpendicular' && typeof value.perpendicularMarkId === 'string'
+      ? value.perpendicularMarkId
+      : undefined;
+  if (source === 'perpendicular' && !perpendicularMarkId) return null;
   const intersectionMarkId =
     source === 'intersection' && typeof value.intersectionMarkId === 'string'
       ? value.intersectionMarkId
@@ -374,6 +384,7 @@ function sanitizeMarkedPoint(value: unknown): MarkedPoint | null {
     tangentOwnerId,
     tangentId,
     intersectionMarkId,
+    perpendicularMarkId,
     intersectionIndex:
       source === 'intersection'
         ? Math.max(0, Math.round(numberValue(value.intersectionIndex, 0)))
@@ -432,6 +443,23 @@ function sanitizeMarkerLine(value: unknown): MarkerLine | null {
   };
 }
 
+function sanitizePerpendicular(value: unknown): PerpendicularMark | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  if (typeof value.pointId !== 'string' || typeof value.lineId !== 'string') return null;
+  if (!value.pointId || !value.lineId) return null;
+  const color = typeof value.color === 'string' && COLOR_RE.test(value.color) ? value.color : '#0f766e';
+  return {
+    id: value.id,
+    pointId: value.pointId,
+    lineId: value.lineId,
+    color,
+    visible: boolValue(value.visible, true),
+    showCoordinates: boolValue(value.showCoordinates, false),
+    showTrace: boolValue(value.showTrace, false),
+    traceClearToken: numberValue(value.traceClearToken, 0),
+  };
+}
+
 export function loadPersistedState(): Partial<PersistedState> | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -483,6 +511,12 @@ export function loadPersistedState(): Partial<PersistedState> | null {
     const knownItemIds = new Set(items2d.map((item) => item.id));
     const objectIntersectionIds = new Set(intersections.map((item) => item.id));
     const tangentIntersectionIds = new Set(tangentIntersections.map((item) => item.id));
+    const pendingPerpendiculars = Array.isArray(parsed.perpendiculars)
+      ? parsed.perpendiculars
+          .map(sanitizePerpendicular)
+          .filter((item): item is PerpendicularMark => item !== null)
+      : [];
+    const perpendicularIds = new Set(pendingPerpendiculars.map((item) => item.id));
     const markedPoints = Array.isArray(parsed.markedPoints)
       ? parsed.markedPoints
           .map(sanitizeMarkedPoint)
@@ -496,12 +530,18 @@ export function loadPersistedState(): Partial<PersistedState> | null {
                       tangentIntersectionIds.has(item.intersectionMarkId)
                     : !!item.intersectionMarkId &&
                       objectIntersectionIds.has(item.intersectionMarkId)
-                  : knownItemIds.has(item.ownerId))) &&
+                  : item.source === 'perpendicular'
+                    ? !!item.perpendicularMarkId &&
+                      perpendicularIds.has(item.perpendicularMarkId)
+                    : knownItemIds.has(item.ownerId))) &&
               (item.source !== 'tangent' ||
                 knownTangentKeys.has(`${item.tangentOwnerId}:${item.tangentId}`)),
           )
       : [];
     const markedPointIds = new Set(markedPoints.map((point) => point.id));
+    const perpendiculars = pendingPerpendiculars.filter((item) =>
+      markedPointIds.has(item.pointId),
+    );
     const divisionMarks = Array.isArray(parsed.divisionMarks)
       ? parsed.divisionMarks
           .map(sanitizeDivisionMark)
@@ -551,6 +591,7 @@ export function loadPersistedState(): Partial<PersistedState> | null {
       markedPoints,
       divisionMarks,
       markerLines,
+      perpendiculars,
       paramValues,
       view2dBoundingBox: bbox,
       snapToGrid: boolValue(parsed.snapToGrid, true),

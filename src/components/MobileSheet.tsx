@@ -22,6 +22,7 @@ export function MobileSheet() {
   const markedPoints = useAppStore((state) => state.markedPoints);
   const divisionMarks = useAppStore((state) => state.divisionMarks);
   const markerLines = useAppStore((state) => state.markerLines);
+  const perpendiculars = useAppStore((state) => state.perpendiculars);
   const autoMovePoints = useAppStore((state) => state.autoMovePoints);
   const setAutoMovePoints = useAppStore((state) => state.setAutoMovePoints);
 
@@ -43,7 +44,8 @@ export function MobileSheet() {
         tangentAngleConstraints.length +
         markedPoints.length +
         divisionMarks.length +
-        markerLines.length
+        markerLines.length +
+        perpendiculars.length
       : items3d.length;
 
   const handleFocus = (event: React.FocusEvent<HTMLDivElement>) => {

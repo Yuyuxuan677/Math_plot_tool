@@ -86,6 +86,25 @@ async function createMarkerLine(page, aName, bName) {
   await page.waitForTimeout(750);
 }
 
+async function createPerpendicular(page, pointName, lineLabel) {
+  await addOption(page, '过点作垂线');
+  const dialog = page.locator('.perpendicular-dialog');
+  const pointSelect = dialog.locator('select[aria-label="选择垂线经过的标记点"]');
+  const pointValue = await pointSelect.locator('option').evaluateAll(
+    (options, name) =>
+      options.find((option) => (option.textContent ?? '').startsWith(`${name}（`))
+        ?.value,
+    pointName,
+  );
+  assert(pointValue, `missing marked point ${pointName}`);
+  await pointSelect.selectOption(pointValue);
+  await dialog
+    .locator('select[aria-label="选择垂直的直线"]')
+    .selectOption({ label: lineLabel });
+  await dialog.getByRole('button', { name: '创建垂线' }).click();
+  await page.waitForTimeout(750);
+}
+
 async function expandCard(page, selector) {
   const card = page.locator(selector).first();
   if ((await card.locator('.card-body').count()) === 0) {
@@ -591,6 +610,62 @@ async function runCoincidentPoints() {
   }
 }
 
+async function runPerpendicularTools() {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await context.newPage();
+  attachWatch(page, 'perpendicular');
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: /y = x²/ }).click();
+    await page.waitForTimeout(400);
+    await markPointAt(page, 1, 1);
+    await createPerpendicular(page, 'A', 'x 轴');
+    assert.equal(await page.locator('.perpendicular-card').count(), 1, 'perpendicular card missing');
+    assert(
+      (await page.locator('.marked-point-card').filter({ hasText: '垂足' }).count()) === 1,
+      'perpendicular foot was not registered as a marked point',
+    );
+    const card = page.locator('.perpendicular-card').first();
+    if ((await card.locator('.card-body').count()) === 0) {
+      await card.locator('.card-title-button').click();
+      await page.waitForTimeout(250);
+    }
+    assert(!(await card.getByRole('switch', { name: '显示垂足坐标' }).isChecked()));
+    assert(!(await card.getByRole('switch', { name: '记录垂足轨迹' }).isChecked()));
+    await card.getByRole('switch', { name: '显示垂足坐标' }).click();
+    await page.waitForTimeout(350);
+    assert(
+      (await page.locator('.jxgbox .JXGtext').allTextContents()).some((text) =>
+        /^\(.*, 0\)$/.test(text.trim()),
+      ),
+      'perpendicular foot coordinates were not shown',
+    );
+    const beforeTrace = await tracePixelCount(page);
+    await card.getByRole('switch', { name: '记录垂足轨迹' }).click();
+    const start = await screenFor(page, 1, 1);
+    const end = await screenFor(page, 2, 4);
+    await page.mouse.move(start.left, start.top);
+    await page.mouse.down();
+    await page.mouse.move(end.left, end.top, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    assert((await tracePixelCount(page)) > beforeTrace, 'perpendicular foot trace missing');
+    await page.screenshot({ path: `${ARTIFACTS}/desktop-2d-perpendicular.png` });
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('.perpendicular-card').count(), 1, 'perpendicular did not persist');
+    assert(
+      (await page.locator('.marked-point-card').filter({ hasText: '垂足' }).count()) === 1,
+      'perpendicular foot did not persist',
+    );
+  } catch (error) {
+    recordError(error);
+  } finally {
+    await context.close();
+  }
+}
+
 async function runPointTools() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
@@ -696,6 +771,7 @@ try {
   await runMobile();
   await runUnifiedTools();
   await runCoincidentPoints();
+  await runPerpendicularTools();
   await runPointTools();
   await runResilience();
 } finally {

@@ -6,6 +6,7 @@ import type {
   Item2D,
   MarkedPoint,
   MarkerLine,
+  PerpendicularMark,
   Point2,
   Tangent,
   TangentAngleConstraint,
@@ -23,6 +24,7 @@ import {
   type ParametricAnalysis,
 } from './analysis';
 import { buildCurveModels, computeIntersections, type CurveModel } from './intersections';
+import { detectItemLine, projectPointToLine, type LineInfo } from './lineTargets';
 import { findTangentPointForAngle } from './tangentSolve';
 
 type AnyElement = any;
@@ -37,6 +39,7 @@ export interface BoardSnapshot {
   markedPoints: MarkedPoint[];
   divisionMarks: DivisionMark[];
   markerLines: MarkerLine[];
+  perpendiculars: PerpendicularMark[];
   paramValues: Record<string, string>;
   snapToGrid: boolean;
 }
@@ -57,6 +60,7 @@ export interface BoardCallbacks {
     kind: 'object' | 'tangent',
     points: Point2[],
   ) => void;
+  onPerpendicularFoot: (markId: string, point: Point2) => void;
   onBoardError: (message: string) => void;
 }
 
@@ -165,6 +169,20 @@ interface MarkerLineEntry {
   pointB: AnyElement;
 }
 
+interface PerpendicularEntry {
+  mark: PerpendicularMark;
+  line: AnyElement;
+  pointAt: AnyElement;
+  pointFoot: AnyElement;
+  coordinateLabel: AnyElement;
+  trace: { points: Point2[]; last: Point2 | null } | null;
+  lastTraceClearToken: number;
+  lastShowTrace: boolean;
+  lastFoot: Point2 | null;
+  lastCoordinateVisible: boolean;
+  lastLastReport: number;
+}
+
 const INITIAL_BBOX: BoundingBox = [-10, 10, 10, -10];
 
 function isFinitePoint(point: Point2 | null | undefined): point is Point2 {
@@ -188,6 +206,7 @@ export class Board2DController {
   private markedPointEntries = new Map<string, MarkedPointEntry>();
   private divisionEntries = new Map<string, DivisionEntry>();
   private markerLineEntries = new Map<string, MarkerLineEntry>();
+  private perpendicularEntries = new Map<string, PerpendicularEntry>();
   private draggingPointIds = new Set<string>();
   private draggingTangentRefs = new Set<string>();
   private boardInteracting = false;
@@ -198,6 +217,7 @@ export class Board2DController {
   private lastConstraintTargetReport = new Map<string, number>();
   private lastIntersectionMarkerReport = new Map<string, number>();
   private lastIntersectionMarkerCount = new Map<string, number>();
+  private lastPerpendicularFootReport = new Map<string, number>();
   private driverTargets = new Map<string, AnyElement>();
   private state: BoardSnapshot = {
     items2d: [],
@@ -208,6 +228,7 @@ export class Board2DController {
     markedPoints: [],
     divisionMarks: [],
     markerLines: [],
+    perpendiculars: [],
     paramValues: {},
     snapToGrid: true,
   };
@@ -433,6 +454,7 @@ export class Board2DController {
     this.syncIntersections(snapshot);
     this.syncMarkedPoints(snapshot);
     this.syncMarkerLines(snapshot);
+    this.syncPerpendiculars(snapshot);
     this.syncDivisionMarks(snapshot);
 
     try {
@@ -544,6 +566,11 @@ export class Board2DController {
       const trace = entry.trace;
       if (!trace || trace.points.length < 2) continue;
       drawPath(trace.points, entry.mark.color, 2.4);
+    }
+    for (const entry of this.perpendicularEntries.values()) {
+      const trace = entry.trace;
+      if (!trace || trace.points.length < 2) continue;
+      drawPath(trace.points, entry.mark.color, 2);
     }
     for (const entry of this.divisionEntries.values()) {
       for (const trace of entry.traces) {
@@ -1642,10 +1669,84 @@ export class Board2DController {
     }
   }
 
+  private ensurePerpendicularMarkedPointEntry(marked: MarkedPoint): MarkedPointEntry | null {
+    const existing = this.markedPointEntries.get(marked.id);
+    if (existing && existing.owned && existing.curve === null) return existing;
+    if (existing) this.destroyMarkedPointEntry(existing);
+    try {
+      const anchor = this.board.create('point', [marked.point.x, marked.point.y], {
+        visible: false,
+        fixed: true,
+        withLabel: false,
+        showInfobox: false,
+        layer: 8,
+      });
+      const label = this.board.create('text', [0, 0, marked.name], {
+        fontSize: 12,
+        strokeColor: '#0369a1',
+        fixed: true,
+        highlight: false,
+        withLabel: false,
+        showInfobox: false,
+        layer: 12,
+      });
+      const entry: MarkedPointEntry = {
+        marked,
+        glider: anchor,
+        curve: null,
+        owned: true,
+        label,
+        direction: 1,
+        lastVisible: false,
+        lastName: '',
+        lastX: NaN,
+        lastY: NaN,
+        lastLabelReport: 0,
+      };
+      this.markedPointEntries.set(marked.id, entry);
+      return entry;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  }
+
   private syncMarkedPoints(snapshot: BoardSnapshot): void {
     const seen = new Set<string>();
     for (const marked of snapshot.markedPoints) {
       seen.add(marked.id);
+      if (marked.source === 'perpendicular') {
+        const entry = this.ensurePerpendicularMarkedPointEntry(marked);
+        if (!entry) continue;
+        entry.marked = marked;
+        const parent = snapshot.perpendiculars.find(
+          (item) => item.id === marked.perpendicularMarkId,
+        );
+        const visible = marked.visible && (parent?.visible ?? true);
+        try {
+          const labelX = marked.point.x + 0.16;
+          const labelY = marked.point.y + 0.16;
+          if (entry.lastVisible !== visible || entry.lastName !== marked.name) {
+            entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+            entry.label?.setAttribute({ visible });
+            entry.label?.setText?.(marked.name);
+            entry.lastVisible = visible;
+            entry.lastName = marked.name;
+          }
+          if (
+            Math.abs(labelX - entry.lastX) > 1e-4 ||
+            Math.abs(labelY - entry.lastY) > 1e-4
+          ) {
+            entry.glider.setPosition(JXG.COORDS_BY_USER, [marked.point.x, marked.point.y]);
+            entry.label?.setPosition(JXG.COORDS_BY_USER, [labelX, labelY]);
+            entry.lastX = labelX;
+            entry.lastY = labelY;
+          }
+        } catch {
+          // ignore
+        }
+        continue;
+      }
       if (marked.source === 'intersection') {
         const entry = this.ensureIntersectionMarkedPointEntry(marked);
         if (!entry) continue;
@@ -2044,6 +2145,7 @@ export class Board2DController {
         !marked.visible ||
         marked.source === 'free' ||
         marked.source === 'intersection' ||
+        marked.source === 'perpendicular' ||
         marked.coordinateLock ||
         !marked.autoMove ||
         this.draggingPointIds.has(marked.id)
@@ -2091,6 +2193,10 @@ export class Board2DController {
   private liveMarkedPoint(id: string, snapshot: BoardSnapshot): Point2 | null {
     const marked = snapshot.markedPoints.find((point) => point.id === id);
     if (!marked) return null;
+    if (marked.source === 'perpendicular' && marked.perpendicularMarkId) {
+      const entry = this.perpendicularEntries.get(marked.perpendicularMarkId);
+      return entry?.lastFoot ? { ...entry.lastFoot } : null;
+    }
     if (marked.source === 'intersection' && marked.intersectionMarkId) {
       if (marked.intersectionKind === 'tangent') {
         const entry = this.tangentIntersectionEntries.get(marked.intersectionMarkId);
@@ -2113,6 +2219,231 @@ export class Board2DController {
       }
     }
     return marked.point;
+  }
+
+  private resolvePerpendicularLine(
+    lineId: string,
+    snapshot: BoardSnapshot,
+  ): LineInfo | null {
+    if (lineId === 'axis:x') {
+      return { point: { x: 0, y: 0 }, slope: 0, vertical: false };
+    }
+    if (lineId === 'axis:y') {
+      return { point: { x: 0, y: 0 }, slope: Infinity, vertical: true };
+    }
+    if (lineId.startsWith('line:')) {
+      const lineIdValue = lineId.slice(5);
+      const mark = snapshot.markerLines.find((line) => line.id === lineIdValue);
+      if (!mark) return null;
+      const pointA = this.liveMarkedPoint(mark.aId, snapshot);
+      const pointB = this.liveMarkedPoint(mark.bId, snapshot);
+      if (!pointA || !pointB) return null;
+      const dx = pointB.x - pointA.x;
+      const dy = pointB.y - pointA.y;
+      if (Math.hypot(dx, dy) < 1e-9) return null;
+      const vertical = Math.abs(dx) < 1e-9 * Math.hypot(dx, dy);
+      return {
+        point: pointA,
+        slope: vertical ? Infinity : dy / dx,
+        vertical,
+      };
+    }
+    if (lineId.startsWith('tan:')) {
+      const [ownerId, tangentId] = lineId.slice(4).split(':');
+      if (!ownerId || !tangentId) return null;
+      const info = this.tangentLineInfo({ ownerId, tangentId });
+      if (!info) return null;
+      return {
+        point: { x: info.px, y: info.py },
+        slope: info.slope,
+        vertical: !Number.isFinite(info.slope),
+      };
+    }
+    if (lineId.startsWith('item:')) {
+      const item = snapshot.items2d.find((candidate) => candidate.id === lineId.slice(5));
+      if (!item) return null;
+      return detectItemLine(item, this.numericParams);
+    }
+    if (lineId.startsWith('perp:')) {
+      const entry = this.perpendicularEntries.get(lineId.slice(5));
+      if (!entry) return null;
+      const a = { x: entry.pointAt.X(), y: entry.pointAt.Y() };
+      const b = { x: entry.pointFoot.X(), y: entry.pointFoot.Y() };
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      if (Math.hypot(dx, dy) < 1e-9) return null;
+      const vertical = Math.abs(dx) < 1e-9 * Math.hypot(dx, dy);
+      return { point: a, slope: vertical ? Infinity : dy / dx, vertical };
+    }
+    return null;
+  }
+
+  private syncPerpendiculars(snapshot: BoardSnapshot): void {
+    if (snapshot.perpendiculars.length === 0 && this.perpendicularEntries.size === 0) return;
+    const seen = new Set<string>();
+    for (const mark of snapshot.perpendiculars) {
+      seen.add(mark.id);
+      const source = snapshot.markedPoints.find((point) => point.id === mark.pointId);
+      const point = this.liveMarkedPoint(mark.pointId, snapshot);
+      const target = this.resolvePerpendicularLine(mark.lineId, snapshot);
+      let entry = this.perpendicularEntries.get(mark.id);
+      if (!entry) {
+        try {
+          const pointAt = this.board.create('point', [0, 0], {
+            visible: false,
+            fixed: true,
+            withLabel: false,
+            showInfobox: false,
+            layer: 8,
+          });
+          const pointFoot = this.board.create('point', [0, 0], {
+            visible: false,
+            fixed: true,
+            withLabel: false,
+            showInfobox: false,
+            layer: 8,
+          });
+          const line = this.board.create('line', [pointAt, pointFoot], {
+            strokeColor: mark.color,
+            strokeWidth: 1.6,
+            dash: 2,
+            highlight: false,
+            fixed: true,
+            withLabel: false,
+            layer: 8,
+          });
+          const coordinateLabel = this.board.create('text', [0, 0, ''], {
+            fontSize: 11,
+            strokeColor: mark.color,
+            fixed: true,
+            highlight: false,
+            withLabel: false,
+            showInfobox: false,
+            visible: false,
+            layer: 12,
+          });
+          entry = {
+            mark,
+            line,
+            pointAt,
+            pointFoot,
+            coordinateLabel,
+            trace: null,
+            lastTraceClearToken: mark.traceClearToken,
+            lastShowTrace: mark.showTrace,
+            lastFoot: null,
+            lastCoordinateVisible: false,
+            lastLastReport: 0,
+          };
+          this.perpendicularEntries.set(mark.id, entry);
+        } catch {
+          continue;
+        }
+      }
+      entry.mark = mark;
+      if (!point || !target || !source) {
+        try {
+          entry.line.setAttribute({ visible: false });
+          entry.coordinateLabel.setAttribute({ visible: false });
+        } catch {
+          // ignore
+        }
+        continue;
+      }
+      const foot = projectPointToLine(point, target);
+      const dx = foot.x - point.x;
+      const dy = foot.y - point.y;
+      const distance = Math.hypot(dx, dy);
+      const normal = target.vertical
+        ? { x: 1, y: 0 }
+        : { x: -target.slope, y: 1 };
+      const normalLength = Math.max(1e-9, Math.hypot(normal.x, normal.y));
+      const lineEnd =
+        distance > 1e-7
+          ? foot
+          : {
+              x: point.x + normal.x / normalLength,
+              y: point.y + normal.y / normalLength,
+            };
+      try {
+        entry.pointAt.setPosition(JXG.COORDS_BY_USER, [point.x, point.y]);
+        entry.pointFoot.setPosition(JXG.COORDS_BY_USER, [lineEnd.x, lineEnd.y]);
+        entry.line.setAttribute({
+          visible: mark.visible && source.visible,
+          strokeColor: mark.color,
+        });
+        const showCoordinates = mark.visible && mark.showCoordinates;
+        entry.coordinateLabel.setAttribute({
+          visible: showCoordinates,
+          strokeColor: mark.color,
+        });
+        const text = `(${formatNumber(foot.x)}, ${formatNumber(foot.y)})`;
+        entry.coordinateLabel.setText(text);
+        entry.coordinateLabel.setPosition(JXG.COORDS_BY_USER, [
+          foot.x + 0.2,
+          foot.y + 0.2,
+        ]);
+        entry.lastCoordinateVisible = showCoordinates;
+      } catch {
+        // ignore transient errors
+      }
+
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const lastReport = this.lastPerpendicularFootReport.get(mark.id) ?? 0;
+      const dragging =
+        this.boardInteracting ||
+        this.draggingPointIds.size > 0 ||
+        this.draggingTangentRefs.size > 0;
+      if (!dragging && now - lastReport >= 120) {
+        this.lastPerpendicularFootReport.set(mark.id, now);
+        this.callbacks.onPerpendicularFoot(mark.id, foot);
+      }
+
+      const traceReset =
+        entry.lastTraceClearToken !== mark.traceClearToken ||
+        entry.lastShowTrace !== mark.showTrace;
+      entry.lastTraceClearToken = mark.traceClearToken;
+      entry.lastShowTrace = mark.showTrace;
+      if (traceReset && entry.trace) {
+        entry.trace.points = [];
+        entry.trace.last = null;
+        this.requestTraceRedraw();
+      }
+      if (mark.visible && mark.showTrace) {
+        if (!entry.trace) entry.trace = { points: [], last: null };
+        const lastPoint = entry.lastFoot;
+        if (
+          !lastPoint ||
+          Math.hypot(lastPoint.x - foot.x, lastPoint.y - foot.y) > 1e-4
+        ) {
+          entry.trace.points.push({ x: foot.x, y: foot.y });
+          if (entry.trace.points.length > 600) {
+            entry.trace.points.splice(0, entry.trace.points.length - 600);
+          }
+          entry.trace.last = { x: foot.x, y: foot.y };
+          entry.lastFoot = { x: foot.x, y: foot.y };
+          this.requestTraceRedraw();
+        }
+      } else {
+        entry.lastFoot = { x: foot.x, y: foot.y };
+      }
+    }
+    for (const [id, entry] of this.perpendicularEntries) {
+      if (!seen.has(id)) this.destroyPerpendicularEntry(entry);
+    }
+  }
+
+  private destroyPerpendicularEntry(entry: PerpendicularEntry): void {
+    try {
+      this.board.removeObject(entry.line);
+      this.board.removeObject(entry.pointAt);
+      this.board.removeObject(entry.pointFoot);
+      this.board.removeObject(entry.coordinateLabel);
+    } catch {
+      // ignore
+    }
+    this.perpendicularEntries.delete(entry.mark.id);
+    this.requestTraceRedraw();
   }
 
   private syncMarkerLines(snapshot: BoardSnapshot): void {
@@ -3668,6 +3999,8 @@ export class Board2DController {
       this.divisionEntries.clear();
       this.markerLineEntries.forEach((entry) => this.destroyMarkerLineEntry(entry));
       this.markerLineEntries.clear();
+      this.perpendicularEntries.forEach((entry) => this.destroyPerpendicularEntry(entry));
+      this.perpendicularEntries.clear();
       this.markedPointEntries.forEach((entry) => this.destroyMarkedPointEntry(entry));
       this.markedPointEntries.clear();
       const JXGAny = JXG as any;
